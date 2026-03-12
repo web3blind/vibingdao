@@ -13,7 +13,6 @@ import {
     resolveP2op,
     NETWORK,
 } from './opnet';
-import { fromBech32 } from '@btc-vision/bitcoin';
 import type { DaoConfig } from './daos';
 
 // ── Shared types ────────────────────────────────────────────────────────────
@@ -255,43 +254,17 @@ const MAX_U256 = (1n << 256n) - 1n;
 /**
  * Build sendTransaction params.
  *
- * The OPNet RPC's btc_getUTXOs returns empty for addresses not yet indexed by
- * the node, causing the SDK to throw "Insufficient UTXOs" BEFORE it ever
- * reaches window.opnet.web3.signInteraction.
- *
- * Fix: supply a placeholder UTXO so the SDK skips acquire() and calls the
- * wallet extension directly.  OP_WALLET fetches its own UTXOs when signing
- * and ignores the placeholder — it only returns real UTXOs in fundingInputUtxos.
- *
- * satBalance — user's confirmed balance in sats (from walletBalance.confirmed).
+ * Pass utxos:[] to bypass the SDK's acquire() call (empty array is truthy in JS,
+ * so `interactionParams.utxos || (await this.acquire(...))` short-circuits).
+ * OP_WALLET then uses its own internal UTXO store to build and sign the PSBT.
  */
-function txParams(btcAddress: string, satBalance: bigint) {
-    // Always provide a placeholder UTXO to bypass btc_getUTXOs (which returns
-    // empty for addresses not yet indexed by the OPNet node).
-    // OP_WALLET fetches its own UTXOs internally and ignores this placeholder.
-    // Use the actual balance if known; fall back to 0.1 BTC so the SDK's
-    // non-empty check always passes even if walletBalance hasn't loaded yet.
-    //
-    // scriptPubKey is required by TransactionBuilder.verifyUTXOValidity().
-    // For a P2TR address: scriptPubKey = OP_1 <32-byte-witness-program> = 5120 + witness.
-    let scriptPubKeyHex = '5120' + '0'.repeat(64); // safe default (64 hex chars = 32 bytes)
-    try {
-        const decoded = fromBech32(btcAddress);
-        scriptPubKeyHex = '5120' + Buffer.from(decoded.data).toString('hex');
-    } catch { /* keep default */ }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const utxos: any[] = [{
-        transactionId: '0000000000000000000000000000000000000000000000000000000000000000',
-        outputIndex:   0,
-        value:         satBalance > 0n ? satBalance : 10_000_000n,
-        scriptPubKey:  { hex: scriptPubKeyHex },
-    }];
-
+function txParams(btcAddress: string) {
+    // Empty array bypasses SDK's acquire() without passing fake UTXOs to the wallet.
     return {
         refundTo:                 btcAddress,
         maximumAllowedSatToSpend: 0n,
         network:                  NETWORK,
-        utxos,
+        utxos:                    [],
     } as const;
 }
 
@@ -307,35 +280,35 @@ export function useDaoActions(
         const daoAddr = await resolveP2op(dao.daoP2op);
         // OP20 uses increaseAllowance, not approve
         const sim     = await c.increaseAllowance(daoAddr, MAX_U256);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao, walletAddr, btcAddress, satBalance]);
 
     const stake = useCallback(async (amount: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.stake(amount);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const unstake = useCallback(async (amount: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.unstake(amount);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const vote = useCallback(async (proposalId: bigint, support: boolean) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.vote(proposalId, support);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const executeProposal = useCallback(async (proposalId: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.executeProposal(proposalId);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const createProposal = useCallback(async (
@@ -353,7 +326,7 @@ export function useDaoActions(
         const tokenAddr     = token     ? await resolveP2op(token).catch(() => zeroAddr)     : zeroAddr;
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.createProposal(proposalType, descriptionHash, amount, recipientAddr, tokenAddr);
-        return sim.sendTransaction(txParams(btcAddress, satBalance));
+        return sim.sendTransaction(txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     return { approve, stake, unstake, vote, executeProposal, createProposal };
