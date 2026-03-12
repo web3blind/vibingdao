@@ -11,6 +11,7 @@ import {
     getTokenReadContract,
     getTokenWriteContract,
     resolveP2op,
+    getProvider,
     NETWORK,
 } from './opnet';
 import type { DaoConfig } from './daos';
@@ -252,20 +253,22 @@ export function useTokenDecimals(dao: DaoConfig): number {
 const MAX_U256 = (1n << 256n) - 1n;
 
 /**
- * Build sendTransaction params.
- *
- * Pass utxos:[] to bypass the SDK's acquire() call (empty array is truthy in JS,
- * so `interactionParams.utxos || (await this.acquire(...))` short-circuits).
- * OP_WALLET then uses its own internal UTXO store to build and sign the PSBT.
+ * Build sendTransaction params with real UTXOs fetched from the OPNet RPC.
+ * Fetching via provider.utxoManager.getUTXOs() gives the wallet extension the
+ * real scriptPubKey + value it needs to build and sign the PSBT.
  */
-function txParams(btcAddress: string) {
-    // Empty array bypasses SDK's acquire() without passing fake UTXOs to the wallet.
+async function txParams(btcAddress: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let utxos: any[] = [];
+    try {
+        utxos = await getProvider().utxoManager.getUTXOs({ address: btcAddress });
+    } catch { /* fall through — wallet will show "No UTXOs found" but that's a node issue */ }
     return {
         refundTo:                 btcAddress,
         maximumAllowedSatToSpend: 0n,
         network:                  NETWORK,
-        utxos:                    [],
-    } as const;
+        utxos,
+    };
 }
 
 export function useDaoActions(
@@ -280,35 +283,35 @@ export function useDaoActions(
         const daoAddr = await resolveP2op(dao.daoP2op);
         // OP20 uses increaseAllowance, not approve
         const sim     = await c.increaseAllowance(daoAddr, MAX_U256);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao, walletAddr, btcAddress, satBalance]);
 
     const stake = useCallback(async (amount: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.stake(amount);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const unstake = useCallback(async (amount: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.unstake(amount);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const vote = useCallback(async (proposalId: bigint, support: boolean) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.vote(proposalId, support);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const executeProposal = useCallback(async (proposalId: bigint) => {
         if (!walletAddr) throw new Error('Wallet not connected');
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.executeProposal(proposalId);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     const createProposal = useCallback(async (
@@ -326,7 +329,7 @@ export function useDaoActions(
         const tokenAddr     = token     ? await resolveP2op(token).catch(() => zeroAddr)     : zeroAddr;
         const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.createProposal(proposalType, descriptionHash, amount, recipientAddr, tokenAddr);
-        return sim.sendTransaction(txParams(btcAddress));
+        return sim.sendTransaction(await txParams(btcAddress));
     }, [dao.daoP2op, walletAddr, btcAddress, satBalance]);
 
     return { approve, stake, unstake, vote, executeProposal, createProposal };
