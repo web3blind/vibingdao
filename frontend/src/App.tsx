@@ -235,15 +235,19 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
             )}
 
             {tab === 'stake' && (
-                connected && address
-                    ? <StakePanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
-                    : <div className="empty">Connect your OP_WALLET to stake.</div>
+                !connected
+                    ? <div className="empty">Connect your OP_WALLET to stake.</div>
+                    : !address
+                        ? <div className="loading">Loading wallet info…</div>
+                        : <StakePanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
             )}
 
             {tab === 'create' && (
-                connected && address
-                    ? <CreateProposalPanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
-                    : <div className="empty">Connect your OP_WALLET to create proposals.</div>
+                !connected
+                    ? <div className="empty">Connect your OP_WALLET to create proposals.</div>
+                    : !address
+                        ? <div className="loading">Loading wallet info…</div>
+                        : <CreateProposalPanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
             )}
         </div>
     );
