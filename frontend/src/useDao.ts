@@ -288,8 +288,6 @@ function txParams(btcAddress: string, satBalance: bigint) {
     }];
 
     return {
-        signer:                   null,
-        mldsaSigner:              null,
         refundTo:                 btcAddress,
         maximumAllowedSatToSpend: 0n,
         network:                  NETWORK,
