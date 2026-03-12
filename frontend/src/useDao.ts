@@ -250,7 +250,8 @@ export function useDaoActions(
         if (!walletAddr) throw new Error('Wallet not connected');
         const c       = await getTokenWriteContract(dao.tokenP2op, walletAddr);
         const daoAddr = await resolveP2op(dao.daoP2op);
-        const sim     = await c.approve(daoAddr, MAX_U256);
+        // OP20 uses increaseAllowance, not approve
+        const sim     = await c.increaseAllowance(daoAddr, MAX_U256);
         return sim.sendTransaction(txParams(btcAddress));
     }, [dao, walletAddr, btcAddress]);
 
