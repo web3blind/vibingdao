@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import './index.css';
 import { ToastProvider, useToast } from './ToastContext';
-import { useWallet } from './useWallet';
+import { WalletProvider, useWallet } from './useWallet';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useDaoStats, useProposals, useStakedBalance, useDaoActions } from './useDao';
 import type { Proposal } from './useDao';
 
@@ -18,10 +19,6 @@ function fmt(n: bigint, decimals = 8): string {
 function shortAddr(addr: string): string {
     if (!addr || addr.length < 12) return addr;
     return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
-}
-
-function isActive(p: Proposal, currentBlock: bigint): boolean {
-    return !p.executed && p.deadline >= currentBlock;
 }
 
 function votePercent(p: Proposal): number {
@@ -46,7 +43,13 @@ function WalletBar() {
 
 // ── Stats row ──────────────────────────────────────────────────────────────
 
-function StatsRow({ stats, loading }: { stats: ReturnType<typeof useDaoStats>['stats']; loading: boolean }) {
+function StatsRow({
+    stats,
+    loading,
+}: {
+    stats: ReturnType<typeof useDaoStats>['stats'];
+    loading: boolean;
+}) {
     if (loading) return <div className="loading">Loading stats…</div>;
     return (
         <div className="stats">
@@ -81,15 +84,19 @@ function ProposalCard({
     onExecute: (id: bigint) => void;
     connected: boolean;
 }) {
-    const active = isActive(proposal, 0n); // simplified: use deadline vs current block
     const pct = votePercent(proposal);
+    // A proposal is active if not yet executed. Deadline vs block number would
+    // require an RPC call; we show both action buttons and let the contract revert.
+    const active = !proposal.executed;
 
     return (
         <div className="proposal">
             <div className="proposal-header">
                 <span className="proposal-id">#{String(proposal.id)}</span>
                 <div style={{ display: 'flex', gap: 6 }}>
-                    <span className={`badge badge-${proposal.proposalType === 0 ? 'text' : 'treasury'}`}>
+                    <span
+                        className={`badge badge-${proposal.proposalType === 0 ? 'text' : 'treasury'}`}
+                    >
                         {proposal.proposalType === 0 ? 'Text' : 'Treasury'}
                     </span>
                     {proposal.executed ? (
@@ -113,27 +120,29 @@ function ProposalCard({
                 <div className="vote-bar-fill" style={{ width: `${pct}%` }} />
             </div>
             <div className="vote-counts">
-                <span className="vote-yes">YES {fmt(proposal.yesVotes)} ({pct}%)</span>
+                <span className="vote-yes">
+                    YES {fmt(proposal.yesVotes)} ({pct}%)
+                </span>
                 <span className="vote-no">NO {fmt(proposal.noVotes)}</span>
             </div>
 
-            {connected && !proposal.executed && (
+            {connected && active && (
                 <div className="proposal-actions">
-                    {active && (
-                        <>
-                            <button className="btn-yes btn-sm" onClick={() => onVote(proposal.id, true)}>
-                                Vote YES
-                            </button>
-                            <button className="btn-no btn-sm" onClick={() => onVote(proposal.id, false)}>
-                                Vote NO
-                            </button>
-                        </>
-                    )}
-                    {!active && (
-                        <button className="btn-sm" onClick={() => onExecute(proposal.id)}>
-                            Execute
-                        </button>
-                    )}
+                    <button
+                        className="btn-yes btn-sm"
+                        onClick={() => onVote(proposal.id, true)}
+                    >
+                        Vote YES
+                    </button>
+                    <button
+                        className="btn-no btn-sm"
+                        onClick={() => onVote(proposal.id, false)}
+                    >
+                        Vote NO
+                    </button>
+                    <button className="btn-outline btn-sm" onClick={() => onExecute(proposal.id)}>
+                        Execute
+                    </button>
                 </div>
             )}
         </div>
@@ -150,12 +159,16 @@ function StakePanel({ address }: { address: string }) {
     const [busy, setBusy] = useState(false);
 
     const handle = async (fn: (n: bigint) => Promise<unknown>, label: string) => {
-        if (!amount || isNaN(Number(amount))) { show('Enter a valid amount', 'error'); return; }
+        const num = Number(amount);
+        if (!amount || isNaN(num) || num <= 0) {
+            show('Enter a valid positive amount', 'error');
+            return;
+        }
         setBusy(true);
         try {
-            const satoshis = BigInt(Math.round(Number(amount) * 1e8));
+            const satoshis = BigInt(Math.round(num * 1e8));
             await fn(satoshis);
-            show(`${label} submitted!`, 'success');
+            show(`${label} submitted! Wait for confirmation.`, 'success');
             setAmount('');
         } catch (e) {
             show(`${label} failed: ${(e as Error).message}`, 'error');
@@ -168,31 +181,35 @@ function StakePanel({ address }: { address: string }) {
         <div className="card">
             <div className="card-title">Stake / Unstake</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
-                Staked: {fmt(balance)} VIBE
+                Your staked balance: <strong style={{ color: 'var(--accent)' }}>{fmt(balance)} VIBE</strong>
             </div>
-            <div className="row">
-                <div className="form-group" style={{ margin: 0 }}>
-                    <input
-                        type="number"
-                        placeholder="Amount (VIBE)"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        disabled={busy}
-                    />
-                </div>
+            <div className="form-group">
+                <label>Amount (VIBE)</label>
+                <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="0.0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    disabled={busy}
+                />
             </div>
-            <div className="row" style={{ marginTop: 10 }}>
+            <div className="row" style={{ marginTop: 4 }}>
                 <button onClick={() => handle(stake, 'Stake')} disabled={busy}>
-                    Stake
+                    {busy ? '…' : 'Stake'}
                 </button>
                 <button
                     className="btn-outline"
                     onClick={() => handle(unstake, 'Unstake')}
                     disabled={busy}
                 >
-                    Unstake
+                    {busy ? '…' : 'Unstake'}
                 </button>
             </div>
+            <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>
+                You must approve this contract on the VIBE token before staking.
+            </p>
         </div>
     );
 }
@@ -213,14 +230,14 @@ function CreateProposalPanel({ address }: { address: string }) {
         if (!desc.trim()) { show('Enter a description', 'error'); return; }
         setBusy(true);
         try {
-            // Simple hash: encode description as UTF-8 and take first 32 bytes as big-endian u256
+            // Derive a deterministic hash from the description text
             const enc = new TextEncoder().encode(desc.slice(0, 32).padEnd(32, '\0'));
             let hash = 0n;
             for (const b of enc) hash = (hash << 8n) | BigInt(b);
 
             const amountSats = amount ? BigInt(Math.round(Number(amount) * 1e8)) : 0n;
             await createProposal(type, hash, amountSats, recipient, token);
-            show('Proposal created!', 'success');
+            show('Proposal created! Wait for confirmation.', 'success');
             setDesc(''); setAmount(''); setRecipient(''); setToken('');
         } catch (e) {
             show(`Failed: ${(e as Error).message}`, 'error');
@@ -234,7 +251,11 @@ function CreateProposalPanel({ address }: { address: string }) {
             <div className="card-title">Create Proposal</div>
             <div className="form-group">
                 <label>Type</label>
-                <select value={type} onChange={(e) => setType(Number(e.target.value) as 0 | 1)}>
+                <select
+                    value={type}
+                    onChange={(e) => setType(Number(e.target.value) as 0 | 1)}
+                    disabled={busy}
+                >
                     <option value={0}>Text — informational, simple majority</option>
                     <option value={1}>Treasury — token transfer, requires quorum</option>
                 </select>
@@ -250,17 +271,17 @@ function CreateProposalPanel({ address }: { address: string }) {
             </div>
             {type === 1 && (
                 <>
-                    <div className="row">
-                        <div className="form-group">
-                            <label>Amount (tokens)</label>
-                            <input
-                                type="number"
-                                placeholder="0.0"
-                                value={amount}
-                                onChange={(e) => setAmount(e.target.value)}
-                                disabled={busy}
-                            />
-                        </div>
+                    <div className="form-group">
+                        <label>Amount (tokens)</label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="0.0"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            disabled={busy}
+                        />
                     </div>
                     <div className="form-group">
                         <label>Recipient address</label>
@@ -272,7 +293,7 @@ function CreateProposalPanel({ address }: { address: string }) {
                         />
                     </div>
                     <div className="form-group">
-                        <label>Token address (blank = staking token)</label>
+                        <label>Token address (blank = VIBE staking token)</label>
                         <input
                             placeholder="op1... or 0x..."
                             value={token}
@@ -282,7 +303,7 @@ function CreateProposalPanel({ address }: { address: string }) {
                     </div>
                 </>
             )}
-            <button onClick={submit} disabled={busy || !address}>
+            <button onClick={submit} disabled={busy}>
                 {busy ? 'Submitting…' : 'Create Proposal'}
             </button>
         </div>
@@ -329,19 +350,22 @@ function DaoApp() {
             <StatsRow stats={stats} loading={statsLoading} />
 
             <div className="tabs">
-                <button className={`tab${tab === 'proposals' ? ' active' : ''}`} onClick={() => setTab('proposals')}>
+                <button
+                    className={`tab${tab === 'proposals' ? ' active' : ''}`}
+                    onClick={() => setTab('proposals')}
+                >
                     Proposals
                 </button>
                 <button
                     className={`tab${tab === 'stake' ? ' active' : ''}`}
-                    onClick={() => setTab('stake')}
+                    onClick={() => { if (connected) setTab('stake'); }}
                     disabled={!connected}
                 >
                     Stake
                 </button>
                 <button
                     className={`tab${tab === 'create' ? ' active' : ''}`}
-                    onClick={() => setTab('create')}
+                    onClick={() => { if (connected) setTab('create'); }}
                     disabled={!connected}
                 >
                     Create
@@ -359,7 +383,9 @@ function DaoApp() {
                     {propsLoading ? (
                         <div className="loading">Loading proposals…</div>
                     ) : proposals.length === 0 ? (
-                        <div className="empty">No proposals yet. Connect wallet and create the first one.</div>
+                        <div className="empty">
+                            No proposals yet. Connect your wallet and create the first one.
+                        </div>
                     ) : (
                         <div className="proposal-list">
                             {[...proposals].reverse().map((p) => (
@@ -376,11 +402,16 @@ function DaoApp() {
                 </>
             )}
 
-            {tab === 'stake' && connected && <StakePanel address={address} />}
-            {tab === 'create' && connected && <CreateProposalPanel address={address} />}
+            {tab === 'stake' && (
+                connected
+                    ? <StakePanel address={address} />
+                    : <div className="empty">Connect your OP_WALLET to stake.</div>
+            )}
 
-            {!connected && tab !== 'proposals' && (
-                <div className="empty">Connect your OP_WALLET to continue.</div>
+            {tab === 'create' && (
+                connected
+                    ? <CreateProposalPanel address={address} />
+                    : <div className="empty">Connect your OP_WALLET to create proposals.</div>
             )}
         </div>
     );
@@ -388,8 +419,12 @@ function DaoApp() {
 
 export default function App() {
     return (
-        <ToastProvider>
-            <DaoApp />
-        </ToastProvider>
+        <ErrorBoundary>
+            <WalletProvider>
+                <ToastProvider>
+                    <DaoApp />
+                </ToastProvider>
+            </WalletProvider>
+        </ErrorBoundary>
     );
 }

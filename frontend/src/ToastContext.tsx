@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 type ToastType = 'success' | 'error' | 'info';
@@ -9,10 +9,11 @@ const ToastContext = createContext<ToastCtx>({ show: () => {} });
 
 export function ToastProvider({ children }: { children: ReactNode }) {
     const [toasts, setToasts] = useState<Toast[]>([]);
-    let nextId = 0;
+    // useRef so the counter persists across renders without resetting
+    const nextId = useRef(0);
 
     const show = useCallback((message: string, type: ToastType = 'info') => {
-        const id = ++nextId;
+        const id = ++nextId.current;
         setToasts((prev) => [...prev, { id, message, type }]);
         setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
     }, []);

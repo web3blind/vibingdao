@@ -1,6 +1,7 @@
 /**
- * OPNet provider + contract singleton utilities.
- * One provider and one contract instance — never re-create them per render.
+ * OPNet provider + contract singletons.
+ * Two contract instances: one anonymous (for reads), one per-sender (for writes).
+ * Never re-created per render — always reuse module-level references.
  */
 import { getContract, JSONRpcProvider } from 'opnet';
 import type { BitcoinInterfaceAbi } from 'opnet';
@@ -11,12 +12,10 @@ import VIBINGDAO_ABI_RAW from './VibingDAO.abi.json';
 export const NETWORK = networks.opnetTestnet;
 export const RPC_URL = 'https://testnet.opnet.org';
 
-// ── Replace with your deployed contract address ───────────────────────────
 export const DAO_ADDRESS_HEX = 'opt1sqze6skcwhe2jju5znavldlldcr4mugrgtgkcncq7';
-// ─────────────────────────────────────────────────────────────────────────
 
-// The OPNetTransform ABI uses "Function"/"Event" (capital) but opnet SDK
-// expects lowercase "function"/"event".  Normalise at runtime.
+// Normalise ABI: OPNetTransform emits "Function"/"Event" (capital) but opnet
+// SDK expects lowercase "function"/"event".
 function normaliseAbi(): BitcoinInterfaceAbi {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fns = (VIBINGDAO_ABI_RAW.functions as any[]).map((f) => ({ ...f, type: 'function' }));
@@ -26,6 +25,7 @@ function normaliseAbi(): BitcoinInterfaceAbi {
 }
 
 const VIBINGDAO_ABI = normaliseAbi();
+const DAO_ADDR = Address.fromString(DAO_ADDRESS_HEX);
 
 let _provider: JSONRpcProvider | null = null;
 export function getProvider(): JSONRpcProvider {
@@ -35,13 +35,36 @@ export function getProvider(): JSONRpcProvider {
     return _provider;
 }
 
+// Anonymous read contract — no sender, cached forever.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _contract: any | null = null;
+let _readContract: any | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getDaoContract(senderAddress?: Address): any {
-    if (!_contract || senderAddress) {
-        const addr = Address.fromString(DAO_ADDRESS_HEX);
-        _contract = getContract(addr, VIBINGDAO_ABI, getProvider(), NETWORK, senderAddress);
+export function getReadContract(): any {
+    if (!_readContract) {
+        _readContract = getContract(DAO_ADDR, VIBINGDAO_ABI, getProvider(), NETWORK);
     }
-    return _contract;
+    return _readContract;
+}
+
+// Write contract — bound to a sender address for accurate simulation context.
+// Cached by address string; recreated only when address changes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _writeContract: any | null = null;
+let _writeContractAddr = '';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getWriteContract(senderAddressStr: string): any {
+    if (_writeContract && _writeContractAddr === senderAddressStr) {
+        return _writeContract;
+    }
+    // For simulation context only — sender is passed as Address if parseable,
+    // otherwise fall back to anonymous (wallet still signs correctly via signer:null).
+    let sender: Address | undefined;
+    try {
+        sender = Address.fromString(senderAddressStr);
+    } catch {
+        sender = undefined;
+    }
+    _writeContract = getContract(DAO_ADDR, VIBINGDAO_ABI, getProvider(), NETWORK, sender);
+    _writeContractAddr = senderAddressStr;
+    return _writeContract;
 }
