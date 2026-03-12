@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { Address, UnisatSigner } from '@btc-vision/transaction';
-import { JSONRpcProvider } from 'opnet';
+import { OPNetLimitedProvider } from '@btc-vision/transaction';
 import {
     getDaoReadContract,
     getDaoWriteContract,
@@ -253,45 +253,48 @@ export function useTokenDecimals(dao: DaoConfig): number {
 
 const MAX_U256 = (1n << 256n) - 1n;
 
-/**
- * Fetch UTXOs via JSONRpcProvider.utxoManager.
- * Uses the official OP.NET SDK to get UTXOs.
- */
-const _provider = new JSONRpcProvider(RPC_URL, NETWORK);
+const _limitedProvider = new OPNetLimitedProvider(RPC_URL);
 
 export const NO_UTXOS_ERROR =
     'NO_UTXOS: Your address has no UTXOs on OPNet testnet. ' +
-    'Get testnet BTC from the OPNet faucet in Discord (discord.gg/opnet → #faucet).';
+    'Get testnet BTC from the OPNet faucet: faucet.opnet.org';
 
 async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Promise<unknown[]> {
-    // Collect all candidate addresses: signer gives [p2wpkh, p2tr], plus btcAddress as fallback
     const signerAddresses = signer?.addresses ?? [];
-    const addresses = signerAddresses.length
-        ? Array.from(new Set([...signerAddresses, btcAddress].filter(Boolean)))
-        : [btcAddress];
+    const addresses = Array.from(new Set(
+        [...signerAddresses, btcAddress].filter(Boolean)
+    ));
 
-    console.debug('[VibingDAO] fetchUTXOs: querying addresses', addresses);
+    console.debug('[VibingDAO] fetchUTXOs querying:', addresses);
 
-    // Try each address individually so we can log which one has UTXOs
     const allUtxos: unknown[] = [];
     for (const addr of addresses) {
         try {
-            // Use JSONRpcProvider.utxoManager as per official docs
-            const utxos = await _provider.utxoManager.getUTXOs({
-                address: addr,
-                mergePendingUTXOs: true,
-                filterSpentUTXOs: true,
+            const url = `${RPC_URL}/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
+            console.debug('[VibingDAO] GET', url);
+            const res  = await fetch(url);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const json = await res.json() as any;
+            console.debug('[VibingDAO] response for', addr, {
+                confirmed: json.confirmed?.length ?? 0,
+                pending:   json.pending?.length   ?? 0,
+                raw:       json.raw?.length        ?? 0,
             });
-            console.debug('[VibingDAO] fetchUTXOs: response for', addr, { count: utxos.length });
-            if (utxos.length > 0) {
-                allUtxos.push(...utxos);
+            const hasUtxos = (json.confirmed?.length ?? 0) + (json.pending?.length ?? 0) > 0;
+            if (hasUtxos) {
+                const parsed = await _limitedProvider.fetchUTXOMultiAddr({
+                    addresses:       [addr],
+                    minAmount:       330n,
+                    requestedAmount: 10_000_000n,
+                });
+                allUtxos.push(...parsed);
             }
         } catch (err) {
-            console.debug('[VibingDAO] fetchUTXOs: error for', addr, err);
+            console.debug('[VibingDAO] error for', addr, err);
         }
     }
 
-    console.debug('[VibingDAO] fetchUTXOs: total UTXOs found:', allUtxos.length);
+    console.debug('[VibingDAO] total UTXOs:', allUtxos.length);
     return allUtxos;
 }
 
