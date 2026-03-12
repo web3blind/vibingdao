@@ -22,6 +22,16 @@ import type { Address } from '@btc-vision/transaction';
 // Pre-warm address cache for all known contracts
 prefetchAddresses(DAO_CONFIGS.flatMap((d) => [d.daoP2op, d.tokenP2op]));
 
+// ── Error helper ────────────────────────────────────────────────────────────
+
+function txError(e: unknown): string {
+    const msg = (e as Error)?.message ?? String(e);
+    if (msg.startsWith('NO_UTXOS:')) {
+        return 'No UTXOs on OPNet testnet. Get tBTC from the OPNet faucet: discord.gg/opnet → #faucet';
+    }
+    return msg;
+}
+
 // ── Formatters ──────────────────────────────────────────────────────────────
 
 function fmt(n: bigint, decimals = 8): string {
@@ -291,14 +301,14 @@ function ProposalCard({
             await vote(proposal.id, support);
             show(`Vote ${support ? 'YES' : 'NO'} submitted`, 'success');
             onRefresh();
-        } catch (e) { show(`Vote failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Vote failed: ${txError(e)}`, 'error'); }
     };
     const handleExecute = async () => {
         try {
             await executeProposal(proposal.id);
             show('Execution submitted', 'success');
             onRefresh();
-        } catch (e) { show(`Execute failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Execute failed: ${txError(e)}`, 'error'); }
     };
 
     return (
@@ -364,7 +374,7 @@ function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig;
             await approve();
             show('Approval submitted! Wait for confirmation, then stake.', 'success');
             setTimeout(refreshAllowance, 4000);
-        } catch (e) { show(`Approve failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Approve failed: ${txError(e)}`, 'error'); }
         finally { setBusy(false); setStep(''); }
     };
 
@@ -376,7 +386,7 @@ function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig;
             await stake(sats);
             show('Stake submitted! Wait for confirmation.', 'success');
             setAmount('');
-        } catch (e) { show(`Stake failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Stake failed: ${txError(e)}`, 'error'); }
         finally { setBusy(false); setStep(''); }
     };
 
@@ -388,7 +398,7 @@ function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig;
             await unstake(sats);
             show('Unstake submitted! Wait for confirmation.', 'success');
             setAmount('');
-        } catch (e) { show(`Unstake failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Unstake failed: ${txError(e)}`, 'error'); }
         finally { setBusy(false); setStep(''); }
     };
 
@@ -467,7 +477,7 @@ function CreateProposalPanel({ dao, walletAddr, btcAddress, decimals }: { dao: D
             await createProposal(type, hash, amountSats, recipient, token);
             show('Proposal submitted! Wait for confirmation.', 'success');
             setDesc(''); setAmount(''); setRecipient(''); setToken('');
-        } catch (e) { show(`Failed: ${(e as Error).message}`, 'error'); }
+        } catch (e) { show(`Failed: ${txError(e)}`, 'error'); }
         finally { setBusy(false); }
     };
 
