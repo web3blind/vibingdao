@@ -1,12 +1,13 @@
 /**
  * OPNet provider + contract factories.
- * All contract addresses are stored as opt1... bech32 strings;
- * resolveP2op() calls getPublicKeysInfoRaw() to get the 32-byte tweaked pubkey
- * and constructs an Address object.  Results are cached so RPC is only hit once.
+ * resolveP2op() handles two address formats:
+ *   opt1p...  (p2tr wallet)  — tweaked pubkey decoded directly from bech32, NO RPC needed
+ *   opt1sq... (p2op contract) — tweaked pubkey fetched via getPublicKeysInfoRaw()
+ * Both produce an Address with legacyPublicKey set so address.p2tr() works.
  */
 import { getContract, JSONRpcProvider } from 'opnet';
 import type { BitcoinInterfaceAbi } from 'opnet';
-import { networks } from '@btc-vision/bitcoin';
+import { networks, fromBech32 } from '@btc-vision/bitcoin';
 import { Address } from '@btc-vision/transaction';
 import VIBINGDAO_ABI_RAW from './VibingDAO.abi.json';
 import { OP20_ABI } from './daos';
@@ -34,25 +35,47 @@ export function getProvider(): JSONRpcProvider {
 }
 
 // ── Address resolution ──────────────────────────────────────────────────────
-// Works for opt1sq... (p2op contracts) and opt1p... (p2tr wallets).
 
-const _addrCache = new Map<string, Address>(); // p2op → resolved Address
+const _addrCache = new Map<string, Address>();
 
-export async function resolveP2op(p2op: string): Promise<Address> {
-    if (!p2op) throw new Error('Empty address');
-    if (_addrCache.has(p2op)) return _addrCache.get(p2op)!;
-    const info = await getProvider().getPublicKeysInfoRaw(p2op);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const entry = info[p2op] as any;
-    if (!entry || 'error' in entry) throw new Error(`Cannot resolve: ${p2op}`);
-    // Use mldsaHashedPublicKey when present (ML-DSA wallet/contract), else fall back to tweakedPubkey.
-    // Always pass tweakedPubkey as the second (legacy/secp256k1) param so address.p2tr() works.
-    const addrContent: string = entry.mldsaHashedPublicKey ?? entry.tweakedPubkey;
-    const legacyKey:   string = entry.tweakedPubkey;
-    if (!addrContent || !legacyKey) throw new Error(`Cannot resolve address content for: ${p2op}`);
-    const addr = Address.fromString('0x' + addrContent, '0x' + legacyKey);
-    _addrCache.set(p2op, addr);
-    return addr;
+/**
+ * Resolve any OPNet address string to a full Address object with legacyPublicKey set.
+ *
+ * opt1p...  (p2tr / wallet) — witness program IS the tweaked pubkey; decode bech32 directly.
+ *   This works even for brand-new wallets that have never sent a transaction and are
+ *   therefore unknown to the OPNet indexer.
+ *
+ * opt1sq... (p2op / contract) — tweaked pubkey comes from getPublicKeysInfoRaw().
+ *
+ * legacyPublicKey (second Address param) MUST be set so that address.p2tr() and
+ * address.tweakedPublicKeyToBuffer() work during transaction building.
+ */
+export async function resolveP2op(addr: string): Promise<Address> {
+    if (!addr) throw new Error('Empty address');
+    if (_addrCache.has(addr)) return _addrCache.get(addr)!;
+
+    let tweakedHex: string;
+    let addrContent: string;
+
+    if (addr.startsWith('opt1p')) {
+        // p2tr — witness program (version 1) = 32-byte x-only tweaked pubkey
+        const decoded = fromBech32(addr);
+        tweakedHex   = Buffer.from(decoded.data).toString('hex');
+        addrContent  = tweakedHex; // no ML-DSA hash available; use secp256k1 key as identity
+    } else {
+        // p2op contract — must query the indexer
+        const info = await getProvider().getPublicKeysInfoRaw(addr);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const entry = info[addr] as any;
+        if (!entry || 'error' in entry) throw new Error(`Cannot resolve: ${addr}`);
+        tweakedHex  = entry.tweakedPubkey as string;
+        addrContent = (entry.mldsaHashedPublicKey ?? tweakedHex) as string;
+        if (!tweakedHex) throw new Error(`No tweaked pubkey for: ${addr}`);
+    }
+
+    const resolved = Address.fromString('0x' + addrContent, '0x' + tweakedHex);
+    _addrCache.set(addr, resolved);
+    return resolved;
 }
 
 // Pre-warm the cache for all known addresses so UI doesn't wait on first render.
