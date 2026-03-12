@@ -39,17 +39,16 @@ export const DAO_CONFIGS: DaoConfig[] = [
         tokenP2op: 'opt1sqzkx6wm5acawl9m6nay2mjsm6wagv7gazcgtczds',
         decimals: 8,
     },
-    // Add PILL and tBTC entries here once contract addresses are known:
-    // {
-    //     id: 'pill',
-    //     name: 'Orange Pill DAO',
-    //     symbol: 'PILL',
-    //     icon: '💊',
-    //     color: '#e11d48',
-    //     daoP2op:   'opt1...',   // deploy with: node deploy.mjs --token <PILL_P2OP>
-    //     tokenP2op: 'opt1...',
-    //     decimals: 8,
-    // },
+    {
+        id: 'pill',
+        name: 'Orange Pill DAO',
+        symbol: 'PILL',
+        icon: '💊',
+        color: '#e11d48',
+        daoP2op:   'opt1sqpsff94rtfzfl864jpjlv8alguk8uwq6wuvcyfx4',
+        tokenP2op: 'opt1sqp5gx9k0nrqph3sy3aeyzt673dz7ygtqxcfdqfle',
+        decimals: 8,
+    },
 ];
 
 /** Minimal OP20 ABI: balanceOf + allowance + approve */

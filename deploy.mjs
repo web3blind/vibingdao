@@ -35,15 +35,30 @@ function loadWallet() {
     return mnemonic.derive(0);
 }
 
-// ── Calldata (all zeros → defaults) ────────────────────────────────────────
+// ── Calldata ────────────────────────────────────────────────────────────────
 
-function buildCalldata() {
+async function buildCalldata(tokenP2op, provider) {
     // u256 maxSupply | u8 decimals | u256 duration | u256 quorum | address stakingToken
-    // All zeros = 21M VIBE, 8 decimals, 144 blocks, 10% quorum, VIBE itself
-    return new Uint8Array(32 + 1 + 32 + 32 + 32); // 129 bytes
+    // All zeros = 21M supply, 8 decimals, 144 blocks, 10% quorum, contract itself
+    const calldata = new Uint8Array(32 + 1 + 32 + 32 + 32); // 129 bytes
+    if (tokenP2op) {
+        console.log(`Resolving staking token: ${tokenP2op}`);
+        const info    = await provider.getPublicKeysInfoRaw(tokenP2op);
+        const tweaked = info[tokenP2op]?.tweakedPubkey;
+        if (!tweaked) throw new Error(`Cannot resolve token address: ${tokenP2op}`);
+        calldata.set(Buffer.from(tweaked, 'hex'), 97); // address starts at byte 97
+        console.log(`Staking token tweaked key: ${tweaked}`);
+    }
+    return calldata;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
+
+// Parse --token <p2op> from CLI args
+const tokenArg = (() => {
+    const idx = process.argv.indexOf('--token');
+    return idx !== -1 ? process.argv[idx + 1] : null;
+})();
 
 const wallet  = loadWallet();
 const address = wallet.p2tr;
@@ -71,7 +86,7 @@ console.log();
 
 // Read WASM
 const bytecode = new Uint8Array(fs.readFileSync(WASM_FILE).buffer);
-const calldata = buildCalldata();
+const calldata = await buildCalldata(tokenArg, provider);
 
 // Challenge (PoW)
 console.log('Fetching epoch challenge…');
