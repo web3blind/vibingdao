@@ -1,0 +1,273 @@
+{
+    "functions": [
+        {
+            "name": "stake",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "success",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "unstake",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "success",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "createProposal",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "proposalType",
+                    "type": "UINT8"
+                },
+                {
+                    "name": "descriptionHash",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "recipient",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "token",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "vote",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "support",
+                    "type": "BOOL"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "success",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "executeProposal",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "passed",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "stakedBalance",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "staker",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getProposal",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "data",
+                    "type": "BYTES"
+                }
+            ]
+        },
+        {
+            "name": "getProposalCount",
+            "type": "Function",
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "count",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getTotalStaked",
+            "type": "Function",
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "total",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getStakingToken",
+            "type": "Function",
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "token",
+                    "type": "ADDRESS"
+                }
+            ]
+        },
+        {
+            "name": "hasVoted",
+            "type": "Function",
+            "inputs": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "voter",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "voted",
+                    "type": "BOOL"
+                }
+            ]
+        }
+    ],
+    "events": [
+        {
+            "name": "Staked",
+            "values": [
+                {
+                    "name": "staker",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "Unstaked",
+            "values": [
+                {
+                    "name": "staker",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "amount",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "ProposalCreated",
+            "values": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "proposalType",
+                    "type": "UINT8"
+                },
+                {
+                    "name": "descriptionHash",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "Voted",
+            "values": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "voter",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "support",
+                    "type": "BOOL"
+                },
+                {
+                    "name": "weight",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "ProposalExecuted",
+            "values": [
+                {
+                    "name": "proposalId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "passed",
+                    "type": "BOOL"
+                }
+            ],
+            "type": "Event"
+        }
+    ]
+}

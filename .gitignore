@@ -1,0 +1,12 @@
+node_modules/
+package-lock.json
+build/
+debug/
+.idea/
+*.log
+*.tsbuildinfo
+.env
+*.key
+*.wallet
+frontend/node_modules/
+frontend/dist/

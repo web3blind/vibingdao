@@ -1,0 +1,23 @@
+{
+    "name": "vibingdao",
+    "version": "1.0.0",
+    "description": "VibingDAO — OP_NET governance contract for the Vibecoding Challenge Week 3",
+    "type": "module",
+    "scripts": {
+        "build": "asc src/index.ts --target dao --measure --uncheckedBehavior never",
+        "format": "prettier --write .",
+        "lint": "eslint . --fix"
+    },
+    "dependencies": {
+        "@btc-vision/as-bignum": "^0.0.6",
+        "@btc-vision/btc-runtime": "^1.10.8",
+        "@btc-vision/opnet-transform": "^0.1.12"
+    },
+    "devDependencies": {
+        "@btc-vision/assemblyscript": "^0.29.2",
+        "@eslint/js": "^10.0.1",
+        "eslint": "^10.0.0",
+        "prettier": "^3.7.4",
+        "typescript-eslint": "^8.56.0"
+    }
+}
