@@ -12,7 +12,10 @@ import VIBINGDAO_ABI_RAW from './VibingDAO.abi.json';
 export const NETWORK = networks.opnetTestnet;
 export const RPC_URL = 'https://testnet.opnet.org';
 
-export const DAO_ADDRESS_HEX = 'opt1sqze6skcwhe2jju5znavldlldcr4mugrgtgkcncq7';
+// Hex tweaked pubkey for the deployed VibingDAO contract.
+// Use hex (0x...) — Address.fromString only accepts hex, not bech32 opt1... addresses.
+// Contract: opt1sqqtee6htq8t5pgtwa2rgnlrts2v95wsa7g7tz0wl
+export const DAO_ADDRESS_HEX = '0x4f12e9853e304c5667e0fbb01730d4862ed0a69d22ad0202b2e6b0dbf4209c51';
 
 // Normalise ABI: OPNetTransform emits "Function"/"Event" (capital) but opnet
 // SDK expects lowercase "function"/"event".
@@ -25,7 +28,12 @@ function normaliseAbi(): BitcoinInterfaceAbi {
 }
 
 const VIBINGDAO_ABI = normaliseAbi();
-const DAO_ADDR = Address.fromString(DAO_ADDRESS_HEX);
+// Lazy-initialised so module load never throws.
+let _daoAddr: Address | null = null;
+function getDaoAddr(): Address {
+    if (!_daoAddr) _daoAddr = Address.fromString(DAO_ADDRESS_HEX);
+    return _daoAddr;
+}
 
 let _provider: JSONRpcProvider | null = null;
 export function getProvider(): JSONRpcProvider {
@@ -41,7 +49,7 @@ let _readContract: any | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getReadContract(): any {
     if (!_readContract) {
-        _readContract = getContract(DAO_ADDR, VIBINGDAO_ABI, getProvider(), NETWORK);
+        _readContract = getContract(getDaoAddr(), VIBINGDAO_ABI, getProvider(), NETWORK);
     }
     return _readContract;
 }
@@ -64,7 +72,7 @@ export function getWriteContract(senderAddressStr: string): any {
     } catch {
         sender = undefined;
     }
-    _writeContract = getContract(DAO_ADDR, VIBINGDAO_ABI, getProvider(), NETWORK, sender);
+    _writeContract = getContract(getDaoAddr(), VIBINGDAO_ABI, getProvider(), NETWORK, sender);
     _writeContractAddr = senderAddressStr;
     return _writeContract;
 }
