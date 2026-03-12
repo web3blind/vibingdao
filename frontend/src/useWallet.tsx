@@ -105,6 +105,14 @@ function InnerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    if (p2tr) {
+        console.debug('[VibingDAO] wallet state:', {
+            btcAddress:      p2tr,
+            signerAddresses: wc.signer?.addresses ?? null,
+            balance:         wc.walletBalance,
+        });
+    }
+
     const value: WalletState = {
         connected:    !!p2tr,
         address:      resolvedAddr,

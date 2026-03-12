@@ -264,28 +264,67 @@ export const NO_UTXOS_ERROR =
     'Get testnet BTC from the OPNet faucet in Discord (discord.gg/opnet → #faucet).';
 
 async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Promise<unknown[]> {
-    const addresses = signer?.addresses?.length ? signer.addresses : [btcAddress];
-    try {
-        return await _limitedProvider.fetchUTXOMultiAddr({
-            addresses,
-            minAmount:       330n,
-            requestedAmount: 1_000_000n,
-        });
-    } catch {
-        return [];
+    // Collect all candidate addresses: signer gives [p2wpkh, p2tr], plus btcAddress as fallback
+    const signerAddresses = signer?.addresses ?? [];
+    const addresses = signerAddresses.length
+        ? Array.from(new Set([...signerAddresses, btcAddress].filter(Boolean)))
+        : [btcAddress];
+
+    console.debug('[VibingDAO] fetchUTXOs: querying addresses', addresses);
+
+    // Try each address individually so we can log which one has UTXOs
+    const allUtxos: unknown[] = [];
+    for (const addr of addresses) {
+        try {
+            const url = `${RPC_URL}/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
+            console.debug('[VibingDAO] fetchUTXOs: GET', url);
+            const res  = await fetch(url);
+            const json = await res.json() as { confirmed?: unknown[]; pending?: unknown[]; raw?: unknown[] };
+            console.debug('[VibingDAO] fetchUTXOs: response for', addr, {
+                confirmed: json.confirmed?.length ?? 0,
+                pending:   json.pending?.length   ?? 0,
+                raw:       json.raw?.length        ?? 0,
+            });
+            if ((json.confirmed?.length ?? 0) > 0 || (json.pending?.length ?? 0) > 0) {
+                // Found UTXOs — use OPNetLimitedProvider to get properly-parsed UTXO objects
+                const found = await _limitedProvider.fetchUTXOMultiAddr({
+                    addresses:      [addr],
+                    minAmount:      330n,
+                    requestedAmount: 1_000_000n,
+                });
+                allUtxos.push(...found);
+            }
+        } catch (err) {
+            console.debug('[VibingDAO] fetchUTXOs: error for', addr, err);
+        }
     }
+
+    console.debug('[VibingDAO] fetchUTXOs: total UTXOs found:', allUtxos.length);
+    return allUtxos;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function sendViaWallet(sim: any, btcAddress: string, signer: UnisatSigner | null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const opnet = (window as any).opnet?.web3;
-    if (!opnet) throw new Error('OP_WALLET not found');
+    const opnet = (window as any).opnet;
+    if (!opnet?.web3) throw new Error('OP_WALLET not found');
 
-    const utxos = await fetchUTXOs(btcAddress, signer);
+    // Also query any accounts the wallet knows about (may differ from walletconnect address)
+    let extraAddresses: string[] = [];
+    try {
+        extraAddresses = (await opnet.getAccounts()) ?? [];
+        console.debug('[VibingDAO] opnet.getAccounts():', extraAddresses);
+    } catch { /* ignore */ }
+
+    // Build a signer-like object with extra addresses appended
+    const signerWithExtras = extraAddresses.length
+        ? { addresses: [...(signer?.addresses ?? [btcAddress]), ...extraAddresses] } as unknown as UnisatSigner
+        : signer;
+
+    const utxos = await fetchUTXOs(btcAddress, signerWithExtras);
     if (utxos.length === 0) throw new Error(NO_UTXOS_ERROR);
 
-    return opnet.signAndBroadcastInteraction({
+    return opnet.web3.signAndBroadcastInteraction({
         contract:                    sim.address.toHex(),
         calldata:                    sim.calldata,
         priorityFee:                 0n,
