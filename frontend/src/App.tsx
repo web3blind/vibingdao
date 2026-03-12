@@ -14,6 +14,7 @@ import {
     useTokenAllowance,
     useAllStakedBalances,
     useDaoActions,
+    useTokenDecimals,
 } from './useDao';
 import type { Proposal } from './useDao';
 import type { Address } from '@btc-vision/transaction';
@@ -115,6 +116,7 @@ function DaoCard({
     highlight: boolean;
 }) {
     const { stats } = useDaoStats(dao);
+    const decimals  = useTokenDecimals(dao);
     return (
         <button
             className={`dao-card${highlight ? ' dao-card-highlight' : ''}`}
@@ -128,12 +130,12 @@ function DaoCard({
                 {stats && (
                     <div className="dao-card-stats">
                         <span>{String(stats.proposalCount)} proposals</span>
-                        <span>{fmt(stats.totalStaked)} staked</span>
+                        <span>{fmt(stats.totalStaked, decimals)} staked</span>
                     </div>
                 )}
                 {staked > 0n && (
                     <div className="dao-card-yours">
-                        Your stake: <strong>{fmt(staked)} {dao.symbol}</strong>
+                        Your stake: <strong>{fmt(staked, decimals)} {dao.symbol}</strong>
                     </div>
                 )}
             </div>
@@ -148,6 +150,7 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
     const { connected, address, btcAddress } = useWallet();
     const { stats, loading: statsLoading, refresh } = useDaoStats(dao);
     const { proposals, loading: propsLoading } = useProposals(dao, stats?.proposalCount ?? 0n);
+    const decimals = useTokenDecimals(dao);
     const [tab, setTab] = useState<'proposals' | 'stake' | 'create'>('proposals');
 
     return (
@@ -171,14 +174,14 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                     <div className="stats" style={{ marginBottom: 24 }}>
                         <div className="stat">
                             <div className="stat-label">Total Staked</div>
-                            <div className="stat-value">{fmt(stats.totalStaked)}</div>
+                            <div className="stat-value">{fmt(stats.totalStaked, decimals)}</div>
                         </div>
                         <div className="stat">
                             <div className="stat-label">Proposals</div>
                             <div className="stat-value">{String(stats.proposalCount)}</div>
                         </div>
                         {connected && address && (
-                            <StakedStatCell dao={dao} walletAddr={address} />
+                            <StakedStatCell dao={dao} walletAddr={address} decimals={decimals} />
                         )}
                     </div>
                 )
@@ -222,6 +225,7 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                                             key={String(p.id)}
                                             proposal={p}
                                             dao={dao}
+                                            decimals={decimals}
                                             connected={connected}
                                             walletAddr={address}
                                             btcAddress={btcAddress}
@@ -239,7 +243,7 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                     ? <div className="empty">Connect your OP_WALLET to stake.</div>
                     : !address
                         ? <div className="loading">Loading wallet info…</div>
-                        : <StakePanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
+                        : <StakePanel dao={dao} walletAddr={address} btcAddress={btcAddress} decimals={decimals} />
             )}
 
             {tab === 'create' && (
@@ -247,18 +251,18 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                     ? <div className="empty">Connect your OP_WALLET to create proposals.</div>
                     : !address
                         ? <div className="loading">Loading wallet info…</div>
-                        : <CreateProposalPanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
+                        : <CreateProposalPanel dao={dao} walletAddr={address} btcAddress={btcAddress} decimals={decimals} />
             )}
         </div>
     );
 }
 
-function StakedStatCell({ dao, walletAddr }: { dao: DaoConfig; walletAddr: Address }) {
+function StakedStatCell({ dao, walletAddr, decimals }: { dao: DaoConfig; walletAddr: Address; decimals: number }) {
     const staked = useStakedBalance(dao, walletAddr);
     return (
         <div className="stat">
             <div className="stat-label">Your Stake</div>
-            <div className="stat-value">{fmt(staked)}</div>
+            <div className="stat-value">{fmt(staked, decimals)}</div>
         </div>
     );
 }
@@ -266,17 +270,19 @@ function StakedStatCell({ dao, walletAddr }: { dao: DaoConfig; walletAddr: Addre
 // ── Proposal card ────────────────────────────────────────────────────────────
 
 function ProposalCard({
-    proposal, dao, connected, walletAddr, btcAddress, onRefresh,
+    proposal, dao, decimals, connected, walletAddr, btcAddress, onRefresh,
 }: {
     proposal: Proposal;
     dao: DaoConfig;
+    decimals: number;
     connected: boolean;
     walletAddr: Address | null;
     btcAddress: string;
     onRefresh: () => void;
 }) {
     const { show } = useToast();
-    const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress);
+    const { satBalance } = useWallet();
+    const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
     const pct    = votePercent(proposal);
     const active = !proposal.executed;
 
@@ -312,15 +318,15 @@ function ProposalCard({
             <div className="hash-display">Hash: 0x{proposal.descriptionHash}</div>
             {proposal.proposalType === 1 && proposal.amount > 0n && (
                 <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                    Transfer: {fmt(proposal.amount)} {dao.symbol}
+                    Transfer: {fmt(proposal.amount, decimals)} {dao.symbol}
                 </div>
             )}
             <div className="vote-bar">
                 <div className="vote-bar-fill" style={{ width: `${pct}%` }} />
             </div>
             <div className="vote-counts">
-                <span className="vote-yes">YES {fmt(proposal.yesVotes)} ({pct}%)</span>
-                <span className="vote-no">NO {fmt(proposal.noVotes)}</span>
+                <span className="vote-yes">YES {fmt(proposal.yesVotes, decimals)} ({pct}%)</span>
+                <span className="vote-no">NO {fmt(proposal.noVotes, decimals)}</span>
             </div>
             {connected && active && (
                 <div className="proposal-actions">
@@ -335,9 +341,10 @@ function ProposalCard({
 
 // ── Stake / Unstake panel ────────────────────────────────────────────────────
 
-function StakePanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAddr: Address; btcAddress: string }) {
-    const { show }  = useToast();
-    const { approve, stake, unstake } = useDaoActions(dao, walletAddr, btcAddress);
+function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig; walletAddr: Address; btcAddress: string; decimals: number }) {
+    const { show }      = useToast();
+    const { satBalance } = useWallet();
+    const { approve, stake, unstake } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
     const walletBal = useTokenBalance(dao, walletAddr);
     const stakedBal = useStakedBalance(dao, walletAddr);
     const { allowance, refreshAllowance } = useTokenAllowance(dao, walletAddr);
@@ -348,7 +355,7 @@ function StakePanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAdd
     const amountSats = (): bigint | null => {
         const n = Number(amount);
         if (!amount || isNaN(n) || n <= 0) return null;
-        return BigInt(Math.round(n * 1e8));
+        return BigInt(Math.round(n * (10 ** decimals)));
     };
 
     const handleApprove = async () => {
@@ -395,11 +402,11 @@ function StakePanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAdd
             <div className="balance-row">
                 <div className="balance-item">
                     <span className="balance-label">Wallet balance</span>
-                    <span className="balance-value">{fmt(walletBal)} {dao.symbol}</span>
+                    <span className="balance-value">{fmt(walletBal, decimals)} {dao.symbol}</span>
                 </div>
                 <div className="balance-item">
                     <span className="balance-label">Staked</span>
-                    <span className="balance-value" style={{ color: 'var(--accent)' }}>{fmt(stakedBal)} {dao.symbol}</span>
+                    <span className="balance-value" style={{ color: 'var(--accent)' }}>{fmt(stakedBal, decimals)} {dao.symbol}</span>
                 </div>
             </div>
 
@@ -438,9 +445,10 @@ function StakePanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAdd
 
 // ── Create proposal panel ────────────────────────────────────────────────────
 
-function CreateProposalPanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAddr: Address; btcAddress: string }) {
+function CreateProposalPanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig; walletAddr: Address; btcAddress: string; decimals: number }) {
     const { show } = useToast();
-    const { createProposal } = useDaoActions(dao, walletAddr, btcAddress);
+    const { satBalance } = useWallet();
+    const { createProposal } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
     const [type,      setType]      = useState<0 | 1>(0);
     const [desc,      setDesc]      = useState('');
     const [amount,    setAmount]    = useState('');
@@ -455,7 +463,7 @@ function CreateProposalPanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; 
             const enc = new TextEncoder().encode(desc.slice(0, 32).padEnd(32, '\0'));
             let hash = 0n;
             for (const b of enc) hash = (hash << 8n) | BigInt(b);
-            const amountSats = amount ? BigInt(Math.round(Number(amount) * 1e8)) : 0n;
+            const amountSats = amount ? BigInt(Math.round(Number(amount) * (10 ** decimals))) : 0n;
             await createProposal(type, hash, amountSats, recipient, token);
             show('Proposal submitted! Wait for confirmation.', 'success');
             setDesc(''); setAmount(''); setRecipient(''); setToken('');

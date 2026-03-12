@@ -19,6 +19,7 @@ export interface WalletState {
     connected:    boolean;
     address:      Address | null;   // Address with both keys — null while resolving
     btcAddress:   string;           // opt1p... — for refundTo / display
+    satBalance:   bigint;           // confirmed BTC balance in satoshis (from wallet)
     connect:      () => void;
     disconnect:   () => void;
 }
@@ -27,6 +28,7 @@ const WalletContext = createContext<WalletState>({
     connected:    false,
     address:      null,
     btcAddress:   '',
+    satBalance:   0n,
     connect:      () => {},
     disconnect:   () => {},
 });
@@ -105,6 +107,7 @@ function InnerProvider({ children }: { children: ReactNode }) {
         connected:    !!p2tr,
         address:      resolvedAddr,
         btcAddress:   p2tr,
+        satBalance:   BigInt(wc.walletBalance?.confirmed ?? 0),
         connect:      wc.openConnectModal,
         disconnect:   wc.disconnect,
     };
