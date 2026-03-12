@@ -265,17 +265,17 @@ async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Prom
         [...signerAddresses, btcAddress].filter(Boolean)
     ));
 
-    console.debug('[VibingDAO] fetchUTXOs querying:', addresses);
+    console.log('[VibingDAO] fetchUTXOs querying:', addresses);
 
     const allUtxos: unknown[] = [];
     for (const addr of addresses) {
         try {
             const url = `${RPC_URL}/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
-            console.debug('[VibingDAO] GET', url);
+            console.log('[VibingDAO] GET', url);
             const res  = await fetch(url);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const json = await res.json() as any;
-            console.debug('[VibingDAO] response for', addr, {
+            console.log('[VibingDAO] response for', addr, {
                 confirmed: json.confirmed?.length ?? 0,
                 pending:   json.pending?.length   ?? 0,
                 raw:       json.raw?.length        ?? 0,
@@ -290,11 +290,11 @@ async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Prom
                 allUtxos.push(...parsed);
             }
         } catch (err) {
-            console.debug('[VibingDAO] error for', addr, err);
+            console.log('[VibingDAO] error for', addr, err);
         }
     }
 
-    console.debug('[VibingDAO] total UTXOs:', allUtxos.length);
+    console.log('[VibingDAO] total UTXOs:', allUtxos.length);
     return allUtxos;
 }
 
@@ -308,7 +308,7 @@ async function sendViaWallet(sim: any, btcAddress: string, signer: UnisatSigner 
     let extraAddresses: string[] = [];
     try {
         extraAddresses = (await opnet.getAccounts()) ?? [];
-        console.debug('[VibingDAO] opnet.getAccounts():', extraAddresses);
+        console.log('[VibingDAO] opnet.getAccounts():', extraAddresses);
     } catch { /* ignore */ }
 
     // Build a signer-like object with extra addresses appended
