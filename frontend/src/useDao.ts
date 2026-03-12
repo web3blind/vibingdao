@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { Address, UnisatSigner } from '@btc-vision/transaction';
-import { OPNetLimitedProvider } from '@btc-vision/transaction';
+import { JSONRpcProvider } from 'opnet';
 import {
     getDaoReadContract,
     getDaoWriteContract,
@@ -254,10 +254,10 @@ export function useTokenDecimals(dao: DaoConfig): number {
 const MAX_U256 = (1n << 256n) - 1n;
 
 /**
- * Fetch UTXOs via OPNetLimitedProvider (REST /api/v1/address/utxos).
- * Queries both p2tr AND p2wpkh addresses so UTXOs on either are found.
+ * Fetch UTXOs via JSONRpcProvider.utxoManager.
+ * Uses the official OP.NET SDK to get UTXOs.
  */
-const _limitedProvider = new OPNetLimitedProvider(RPC_URL);
+const _provider = new JSONRpcProvider(RPC_URL, NETWORK);
 
 export const NO_UTXOS_ERROR =
     'NO_UTXOS: Your address has no UTXOs on OPNet testnet. ' +
@@ -276,23 +276,15 @@ async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Prom
     const allUtxos: unknown[] = [];
     for (const addr of addresses) {
         try {
-            const url = `${RPC_URL}/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
-            console.debug('[VibingDAO] fetchUTXOs: GET', url);
-            const res  = await fetch(url);
-            const json = await res.json() as { confirmed?: unknown[]; pending?: unknown[]; raw?: unknown[] };
-            console.debug('[VibingDAO] fetchUTXOs: response for', addr, {
-                confirmed: json.confirmed?.length ?? 0,
-                pending:   json.pending?.length   ?? 0,
-                raw:       json.raw?.length        ?? 0,
+            // Use JSONRpcProvider.utxoManager as per official docs
+            const utxos = await _provider.utxoManager.getUTXOs({
+                address: addr,
+                mergePendingUTXOs: true,
+                filterSpentUTXOs: true,
             });
-            if ((json.confirmed?.length ?? 0) > 0 || (json.pending?.length ?? 0) > 0) {
-                // Found UTXOs — use OPNetLimitedProvider to get properly-parsed UTXO objects
-                const found = await _limitedProvider.fetchUTXOMultiAddr({
-                    addresses:      [addr],
-                    minAmount:      330n,
-                    requestedAmount: 1_000_000n,
-                });
-                allUtxos.push(...found);
+            console.debug('[VibingDAO] fetchUTXOs: response for', addr, { count: utxos.length });
+            if (utxos.length > 0) {
+                allUtxos.push(...utxos);
             }
         } catch (err) {
             console.debug('[VibingDAO] fetchUTXOs: error for', addr, err);
