@@ -13,6 +13,7 @@ import {
     resolveP2op,
     NETWORK,
 } from './opnet';
+import { fromBech32 } from '@btc-vision/bitcoin';
 import type { DaoConfig } from './daos';
 
 // ── Shared types ────────────────────────────────────────────────────────────
@@ -270,11 +271,20 @@ function txParams(btcAddress: string, satBalance: bigint) {
     // OP_WALLET fetches its own UTXOs internally and ignores this placeholder.
     // Use the actual balance if known; fall back to 0.1 BTC so the SDK's
     // non-empty check always passes even if walletBalance hasn't loaded yet.
+    //
+    // scriptPubKey is required by TransactionBuilder.verifyUTXOValidity().
+    // For a P2TR address: scriptPubKey = OP_1 <32-byte-witness-program> = 5120 + witness.
+    let scriptPubKeyHex = '5120' + '0'.repeat(64); // safe default (64 hex chars = 32 bytes)
+    try {
+        const decoded = fromBech32(btcAddress);
+        scriptPubKeyHex = '5120' + Buffer.from(decoded.data).toString('hex');
+    } catch { /* keep default */ }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const utxos: any[] = [{
         transactionId: '0000000000000000000000000000000000000000000000000000000000000000',
         outputIndex:   0,
         value:         satBalance > 0n ? satBalance : 10_000_000n,
+        scriptPubKey:  { hex: scriptPubKeyHex },
     }];
 
     return {
