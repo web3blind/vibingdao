@@ -12,7 +12,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { WalletConnectProvider } from '@btc-vision/walletconnect/browser';
 import { useWalletConnect } from '@btc-vision/walletconnect';
-import { Address } from '@btc-vision/transaction';
+import { Address, type UnisatSigner } from '@btc-vision/transaction';
 import { resolveP2op } from './opnet';
 
 export interface WalletState {
@@ -20,6 +20,7 @@ export interface WalletState {
     address:      Address | null;   // Address with both keys — null while resolving
     btcAddress:   string;           // opt1p... — for refundTo / display
     satBalance:   bigint;           // confirmed BTC balance in satoshis (from wallet)
+    signer:       UnisatSigner | null; // UnisatSigner with .addresses = [p2wpkh, p2tr]
     connect:      () => void;
     disconnect:   () => void;
 }
@@ -29,6 +30,7 @@ const WalletContext = createContext<WalletState>({
     address:      null,
     btcAddress:   '',
     satBalance:   0n,
+    signer:       null,
     connect:      () => {},
     disconnect:   () => {},
 });
@@ -108,6 +110,7 @@ function InnerProvider({ children }: { children: ReactNode }) {
         address:      resolvedAddr,
         btcAddress:   p2tr,
         satBalance:   BigInt(wc.walletBalance?.confirmed ?? 0),
+        signer:       wc.signer,
         connect:      wc.openConnectModal,
         disconnect:   wc.disconnect,
     };

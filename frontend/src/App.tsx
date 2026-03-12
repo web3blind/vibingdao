@@ -281,8 +281,8 @@ function ProposalCard({
     onRefresh: () => void;
 }) {
     const { show } = useToast();
-    const { satBalance } = useWallet();
-    const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
+    const { signer } = useWallet();
+    const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress, signer);
     const pct    = votePercent(proposal);
     const active = !proposal.executed;
 
@@ -343,8 +343,8 @@ function ProposalCard({
 
 function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig; walletAddr: Address; btcAddress: string; decimals: number }) {
     const { show }      = useToast();
-    const { satBalance } = useWallet();
-    const { approve, stake, unstake } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
+    const { signer } = useWallet();
+    const { approve, stake, unstake } = useDaoActions(dao, walletAddr, btcAddress, signer);
     const walletBal = useTokenBalance(dao, walletAddr);
     const stakedBal = useStakedBalance(dao, walletAddr);
     const { allowance, refreshAllowance } = useTokenAllowance(dao, walletAddr);
@@ -447,8 +447,8 @@ function StakePanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig;
 
 function CreateProposalPanel({ dao, walletAddr, btcAddress, decimals }: { dao: DaoConfig; walletAddr: Address; btcAddress: string; decimals: number }) {
     const { show } = useToast();
-    const { satBalance } = useWallet();
-    const { createProposal } = useDaoActions(dao, walletAddr, btcAddress, satBalance);
+    const { signer } = useWallet();
+    const { createProposal } = useDaoActions(dao, walletAddr, btcAddress, signer);
     const [type,      setType]      = useState<0 | 1>(0);
     const [desc,      setDesc]      = useState('');
     const [amount,    setAmount]    = useState('');
