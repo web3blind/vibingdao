@@ -16,6 +16,7 @@ import {
     useDaoActions,
 } from './useDao';
 import type { Proposal } from './useDao';
+import type { Address } from '@btc-vision/transaction';
 
 // Pre-warm address cache for all known contracts
 prefetchAddresses(DAO_CONFIGS.flatMap((d) => [d.daoP2op, d.tokenP2op]));
@@ -44,10 +45,10 @@ function votePercent(p: Proposal): number {
 // ── Wallet bar ──────────────────────────────────────────────────────────────
 
 function WalletBar() {
-    const { connected, address, connect, disconnect } = useWallet();
+    const { connected, btcAddress, connect, disconnect } = useWallet();
     return connected ? (
         <div className="wallet-info">
-            <span className="address-pill">{shortAddr(address)}</span>
+            <span className="address-pill">{shortAddr(btcAddress)}</span>
             <button className="btn-outline btn-sm" onClick={disconnect}>Disconnect</button>
         </div>
     ) : (
@@ -144,7 +145,7 @@ function DaoCard({
 // ── DAO detail page ─────────────────────────────────────────────────────────
 
 function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
-    const { connected, address } = useWallet();
+    const { connected, address, btcAddress } = useWallet();
     const { stats, loading: statsLoading, refresh } = useDaoStats(dao);
     const { proposals, loading: propsLoading } = useProposals(dao, stats?.proposalCount ?? 0n);
     const [tab, setTab] = useState<'proposals' | 'stake' | 'create'>('proposals');
@@ -176,8 +177,8 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                             <div className="stat-label">Proposals</div>
                             <div className="stat-value">{String(stats.proposalCount)}</div>
                         </div>
-                        {connected && (
-                            <StakedStatCell dao={dao} address={address} />
+                        {connected && address && (
+                            <StakedStatCell dao={dao} walletAddr={address} />
                         )}
                     </div>
                 )
@@ -222,7 +223,8 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                                             proposal={p}
                                             dao={dao}
                                             connected={connected}
-                                            walletP2op={address}
+                                            walletAddr={address}
+                                            btcAddress={btcAddress}
                                             onRefresh={refresh}
                                         />
                                     ))}
@@ -233,22 +235,22 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
             )}
 
             {tab === 'stake' && (
-                connected
-                    ? <StakePanel dao={dao} address={address} />
+                connected && address
+                    ? <StakePanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
                     : <div className="empty">Connect your OP_WALLET to stake.</div>
             )}
 
             {tab === 'create' && (
-                connected
-                    ? <CreateProposalPanel dao={dao} address={address} />
+                connected && address
+                    ? <CreateProposalPanel dao={dao} walletAddr={address} btcAddress={btcAddress} />
                     : <div className="empty">Connect your OP_WALLET to create proposals.</div>
             )}
         </div>
     );
 }
 
-function StakedStatCell({ dao, address }: { dao: DaoConfig; address: string }) {
-    const staked = useStakedBalance(dao, address);
+function StakedStatCell({ dao, walletAddr }: { dao: DaoConfig; walletAddr: Address }) {
+    const staked = useStakedBalance(dao, walletAddr);
     return (
         <div className="stat">
             <div className="stat-label">Your Stake</div>
@@ -260,16 +262,17 @@ function StakedStatCell({ dao, address }: { dao: DaoConfig; address: string }) {
 // ── Proposal card ────────────────────────────────────────────────────────────
 
 function ProposalCard({
-    proposal, dao, connected, walletP2op, onRefresh,
+    proposal, dao, connected, walletAddr, btcAddress, onRefresh,
 }: {
     proposal: Proposal;
     dao: DaoConfig;
     connected: boolean;
-    walletP2op: string;
+    walletAddr: Address | null;
+    btcAddress: string;
     onRefresh: () => void;
 }) {
     const { show } = useToast();
-    const { vote, executeProposal } = useDaoActions(dao, walletP2op);
+    const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress);
     const pct    = votePercent(proposal);
     const active = !proposal.executed;
 
@@ -328,12 +331,12 @@ function ProposalCard({
 
 // ── Stake / Unstake panel ────────────────────────────────────────────────────
 
-function StakePanel({ dao, address }: { dao: DaoConfig; address: string }) {
+function StakePanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAddr: Address; btcAddress: string }) {
     const { show }  = useToast();
-    const { approve, stake, unstake } = useDaoActions(dao, address);
-    const walletBal = useTokenBalance(dao, address);
-    const stakedBal = useStakedBalance(dao, address);
-    const { allowance, refreshAllowance } = useTokenAllowance(dao, address);
+    const { approve, stake, unstake } = useDaoActions(dao, walletAddr, btcAddress);
+    const walletBal = useTokenBalance(dao, walletAddr);
+    const stakedBal = useStakedBalance(dao, walletAddr);
+    const { allowance, refreshAllowance } = useTokenAllowance(dao, walletAddr);
     const [amount, setAmount] = useState('');
     const [busy,   setBusy]   = useState(false);
     const [step,   setStep]   = useState('');
@@ -431,9 +434,9 @@ function StakePanel({ dao, address }: { dao: DaoConfig; address: string }) {
 
 // ── Create proposal panel ────────────────────────────────────────────────────
 
-function CreateProposalPanel({ dao, address }: { dao: DaoConfig; address: string }) {
+function CreateProposalPanel({ dao, walletAddr, btcAddress }: { dao: DaoConfig; walletAddr: Address; btcAddress: string }) {
     const { show } = useToast();
-    const { createProposal } = useDaoActions(dao, address);
+    const { createProposal } = useDaoActions(dao, walletAddr, btcAddress);
     const [type,      setType]      = useState<0 | 1>(0);
     const [desc,      setDesc]      = useState('');
     const [amount,    setAmount]    = useState('');

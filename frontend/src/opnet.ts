@@ -41,36 +41,42 @@ const _addrCache = new Map<string, Address>();
 /**
  * Resolve any OPNet address string to a full Address object with legacyPublicKey set.
  *
- * opt1p...  (p2tr / wallet) — witness program IS the tweaked pubkey; decode bech32 directly.
- *   This works even for brand-new wallets that have never sent a transaction and are
- *   therefore unknown to the OPNet indexer.
+ * Address.fromString(first, second):
+ *   first  = ML-DSA hash (mldsaHashedPublicKey) when present, else secp256k1 tweaked key.
+ *            This is what OP20 contracts use for storage — must match what the contract sees.
+ *   second = secp256k1 tweaked pubkey (legacyPublicKey).
+ *            Required by address.p2tr() / tweakedPublicKeyToBuffer() during TX building.
  *
- * opt1sq... (p2op / contract) — tweaked pubkey comes from getPublicKeysInfoRaw().
- *
- * legacyPublicKey (second Address param) MUST be set so that address.p2tr() and
- * address.tweakedPublicKeyToBuffer() work during transaction building.
+ * Strategy:
+ *   1. Always try RPC (getPublicKeysInfoRaw) — returns both keys for indexed addresses.
+ *   2. If the address is p2tr (opt1p...) and RPC returns "not found" (brand-new wallet),
+ *      fall back to decoding the bech32 witness program which IS the secp256k1 tweaked key.
  */
 export async function resolveP2op(addr: string): Promise<Address> {
     if (!addr) throw new Error('Empty address');
     if (_addrCache.has(addr)) return _addrCache.get(addr)!;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let entry: any = null;
+    try {
+        const info = await getProvider().getPublicKeysInfoRaw(addr);
+        entry = info[addr];
+        if ('error' in entry) entry = null;
+    } catch { /* fall through to bech32 fallback */ }
+
     let tweakedHex: string;
     let addrContent: string;
 
-    if (addr.startsWith('opt1p')) {
-        // p2tr — witness program (version 1) = 32-byte x-only tweaked pubkey
-        const decoded = fromBech32(addr);
-        tweakedHex   = Buffer.from(decoded.data).toString('hex');
-        addrContent  = tweakedHex; // no ML-DSA hash available; use secp256k1 key as identity
-    } else {
-        // p2op contract — must query the indexer
-        const info = await getProvider().getPublicKeysInfoRaw(addr);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const entry = info[addr] as any;
-        if (!entry || 'error' in entry) throw new Error(`Cannot resolve: ${addr}`);
+    if (entry?.tweakedPubkey) {
         tweakedHex  = entry.tweakedPubkey as string;
         addrContent = (entry.mldsaHashedPublicKey ?? tweakedHex) as string;
-        if (!tweakedHex) throw new Error(`No tweaked pubkey for: ${addr}`);
+    } else if (addr.startsWith('opt1p')) {
+        // Fallback: p2tr witness program = x-only secp256k1 tweaked key (32 bytes)
+        const decoded = fromBech32(addr);
+        tweakedHex   = Buffer.from(decoded.data).toString('hex');
+        addrContent  = tweakedHex;
+    } else {
+        throw new Error(`Cannot resolve: ${addr}`);
     }
 
     const resolved = Address.fromString('0x' + addrContent, '0x' + tweakedHex);
@@ -99,13 +105,10 @@ export async function getDaoReadContract(daoP2op: string): Promise<any> {
 
 const _daoWrite = new Map<string, unknown>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function getDaoWriteContract(daoP2op: string, senderP2op: string): Promise<any> {
-    const key = `${daoP2op}:${senderP2op}`;
+export async function getDaoWriteContract(daoP2op: string, sender: Address): Promise<any> {
+    const key = `${daoP2op}:${sender.toHex()}`;
     if (!_daoWrite.has(key)) {
         const daoAddr = await resolveP2op(daoP2op);
-        const sender  = senderP2op
-            ? await resolveP2op(senderP2op).catch(() => undefined)
-            : undefined;
         _daoWrite.set(key, getContract(daoAddr, VIBINGDAO_ABI, getProvider(), NETWORK, sender));
     }
     return _daoWrite.get(key);
@@ -125,13 +128,10 @@ export async function getTokenReadContract(tokenP2op: string): Promise<any> {
 
 const _tokenWrite = new Map<string, unknown>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function getTokenWriteContract(tokenP2op: string, senderP2op: string): Promise<any> {
-    const key = `${tokenP2op}:${senderP2op}`;
+export async function getTokenWriteContract(tokenP2op: string, sender: Address): Promise<any> {
+    const key = `${tokenP2op}:${sender.toHex()}`;
     if (!_tokenWrite.has(key)) {
         const tokenAddr = await resolveP2op(tokenP2op);
-        const sender    = senderP2op
-            ? await resolveP2op(senderP2op).catch(() => undefined)
-            : undefined;
         _tokenWrite.set(key, getContract(tokenAddr, OP20_ABI, getProvider(), NETWORK, sender));
     }
     return _tokenWrite.get(key);

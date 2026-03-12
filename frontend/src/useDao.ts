@@ -1,11 +1,10 @@
 /**
- * DAO + OP20 hooks — all parameterised by DaoConfig / address strings.
- * Rules:
- *   - signer: null / mldsaSigner: null in sendTransaction (wallet signs)
- *   - always simulate before send
- *   - never raw PSBT
+ * DAO + OP20 hooks.
+ * walletAddr  — full Address object from @btc-vision/walletconnect (ML-DSA hash + legacyPublicKey).
+ * btcAddress  — opt1p... p2tr string used only for refundTo in sendTransaction.
  */
 import { useCallback, useEffect, useState } from 'react';
+import type { Address } from '@btc-vision/transaction';
 import {
     getDaoReadContract,
     getDaoWriteContract,
@@ -136,65 +135,58 @@ export function useProposals(dao: DaoConfig, count: bigint) {
 
 // ── Staked balance in a specific DAO ────────────────────────────────────────
 
-export function useStakedBalance(dao: DaoConfig, walletP2op: string) {
+export function useStakedBalance(dao: DaoConfig, walletAddr: Address | null) {
     const [balance, setBalance] = useState(0n);
 
     useEffect(() => {
-        if (!walletP2op) return;
+        if (!walletAddr) return;
         let cancelled = false;
         async function fetch() {
             try {
-                const [c, walletAddr] = await Promise.all([
-                    getDaoReadContract(dao.daoP2op),
-                    resolveP2op(walletP2op),
-                ]);
+                const c = await getDaoReadContract(dao.daoP2op);
                 const r = await c.stakedBalance(walletAddr);
                 if (!cancelled) setBalance(bigVal(r));
             } catch { if (!cancelled) setBalance(0n); }
         }
         fetch();
         return () => { cancelled = true; };
-    }, [dao.daoP2op, walletP2op]);
+    }, [dao.daoP2op, walletAddr]);
 
     return balance;
 }
 
 // ── OP20 token wallet balance ────────────────────────────────────────────────
 
-export function useTokenBalance(dao: DaoConfig, walletP2op: string) {
+export function useTokenBalance(dao: DaoConfig, walletAddr: Address | null) {
     const [balance, setBalance] = useState(0n);
 
     useEffect(() => {
-        if (!walletP2op) return;
+        if (!walletAddr) return;
         let cancelled = false;
         async function fetch() {
             try {
-                const [c, walletAddr] = await Promise.all([
-                    getTokenReadContract(dao.tokenP2op),
-                    resolveP2op(walletP2op),
-                ]);
+                const c = await getTokenReadContract(dao.tokenP2op);
                 const r = await c.balanceOf(walletAddr);
                 if (!cancelled) setBalance(bigVal(r));
             } catch { if (!cancelled) setBalance(0n); }
         }
         fetch();
         return () => { cancelled = true; };
-    }, [dao.tokenP2op, walletP2op]);
+    }, [dao.tokenP2op, walletAddr]);
 
     return balance;
 }
 
 // ── Staked balance across all DAOs (for home page) ──────────────────────────
 
-export function useAllStakedBalances(daos: DaoConfig[], walletP2op: string) {
+export function useAllStakedBalances(daos: DaoConfig[], walletAddr: Address | null) {
     const [balances, setBalances] = useState<Record<string, bigint>>({});
 
     useEffect(() => {
-        if (!walletP2op) { setBalances({}); return; }
+        if (!walletAddr) { setBalances({}); return; }
         let cancelled = false;
         async function fetch() {
             try {
-                const walletAddr = await resolveP2op(walletP2op);
                 const entries = await Promise.all(
                     daos.map(async (dao) => {
                         try {
@@ -209,28 +201,27 @@ export function useAllStakedBalances(daos: DaoConfig[], walletP2op: string) {
         }
         fetch();
         return () => { cancelled = true; };
-    }, [daos, walletP2op]);
+    }, [daos, walletAddr]);
 
     return balances;
 }
 
 // ── Token allowance ─────────────────────────────────────────────────────────
 
-export function useTokenAllowance(dao: DaoConfig, walletP2op: string) {
+export function useTokenAllowance(dao: DaoConfig, walletAddr: Address | null) {
     const [allowance, setAllowance] = useState(0n);
 
     const refresh = useCallback(async () => {
-        if (!walletP2op) return;
+        if (!walletAddr) return;
         try {
-            const [c, walletAddr, daoAddr] = await Promise.all([
+            const [c, daoAddr] = await Promise.all([
                 getTokenReadContract(dao.tokenP2op),
-                resolveP2op(walletP2op),
                 resolveP2op(dao.daoP2op),
             ]);
             const r = await c.allowance(walletAddr, daoAddr);
             setAllowance(bigVal(r));
         } catch { setAllowance(0n); }
-    }, [dao.tokenP2op, dao.daoP2op, walletP2op]);
+    }, [dao.tokenP2op, dao.daoP2op, walletAddr]);
 
     useEffect(() => { refresh(); }, [refresh]);
     return { allowance, refreshAllowance: refresh };
@@ -240,50 +231,56 @@ export function useTokenAllowance(dao: DaoConfig, walletP2op: string) {
 
 const MAX_U256 = (1n << 256n) - 1n;
 
-// Minimal params required by TransactionParameters when using OP_WALLET browser extension.
-// refundTo = wallet's p2tr address (change goes back there).
-// maximumAllowedSatToSpend = 0n means "just cover fees" (wallet/SDK adds gas on top).
-function txParams(walletP2op: string) {
+function txParams(btcAddress: string) {
     return {
         signer:                   null,
         mldsaSigner:              null,
-        refundTo:                 walletP2op,
+        refundTo:                 btcAddress,
         maximumAllowedSatToSpend: 0n,
         network:                  NETWORK,
     } as const;
 }
 
-export function useDaoActions(dao: DaoConfig, walletP2op: string) {
+export function useDaoActions(
+    dao: DaoConfig,
+    walletAddr: Address | null,
+    btcAddress: string,
+) {
     const approve = useCallback(async () => {
-        const c       = await getTokenWriteContract(dao.tokenP2op, walletP2op);
+        if (!walletAddr) throw new Error('Wallet not connected');
+        const c       = await getTokenWriteContract(dao.tokenP2op, walletAddr);
         const daoAddr = await resolveP2op(dao.daoP2op);
         const sim     = await c.approve(daoAddr, MAX_U256);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao, walletAddr, btcAddress]);
 
     const stake = useCallback(async (amount: bigint) => {
-        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        if (!walletAddr) throw new Error('Wallet not connected');
+        const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.stake(amount);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao.daoP2op, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao.daoP2op, walletAddr, btcAddress]);
 
     const unstake = useCallback(async (amount: bigint) => {
-        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        if (!walletAddr) throw new Error('Wallet not connected');
+        const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.unstake(amount);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao.daoP2op, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao.daoP2op, walletAddr, btcAddress]);
 
     const vote = useCallback(async (proposalId: bigint, support: boolean) => {
-        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        if (!walletAddr) throw new Error('Wallet not connected');
+        const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.vote(proposalId, support);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao.daoP2op, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao.daoP2op, walletAddr, btcAddress]);
 
     const executeProposal = useCallback(async (proposalId: bigint) => {
-        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        if (!walletAddr) throw new Error('Wallet not connected');
+        const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.executeProposal(proposalId);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao.daoP2op, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao.daoP2op, walletAddr, btcAddress]);
 
     const createProposal = useCallback(async (
         proposalType: number,
@@ -292,15 +289,16 @@ export function useDaoActions(dao: DaoConfig, walletP2op: string) {
         recipient: string,
         token: string,
     ) => {
+        if (!walletAddr) throw new Error('Wallet not connected');
         const zeroAddr = await resolveP2op('opt1sqqtee6htq8t5pgtwa2rgnlrts2v95wsa7g7tz0wl').catch(
             () => { throw new Error('Cannot resolve zero address'); }
         );
         const recipientAddr = recipient ? await resolveP2op(recipient).catch(() => zeroAddr) : zeroAddr;
         const tokenAddr     = token     ? await resolveP2op(token).catch(() => zeroAddr)     : zeroAddr;
-        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const c   = await getDaoWriteContract(dao.daoP2op, walletAddr);
         const sim = await c.createProposal(proposalType, descriptionHash, amount, recipientAddr, tokenAddr);
-        return sim.sendTransaction(txParams(walletP2op));
-    }, [dao.daoP2op, walletP2op]);
+        return sim.sendTransaction(txParams(btcAddress));
+    }, [dao.daoP2op, walletAddr, btcAddress]);
 
     return { approve, stake, unstake, vote, executeProposal, createProposal };
 }

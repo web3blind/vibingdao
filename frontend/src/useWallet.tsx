@@ -1,97 +1,53 @@
 /**
- * Wallet state — shared via React context so every component sees the same
- * connection state. Call useWallet() anywhere; wrap the app in <WalletProvider>.
+ * Thin wrapper around @btc-vision/walletconnect so the rest of the app
+ * works with a simple { connected, address, btcAddress, connect, disconnect }.
+ *
+ * address    — full Address object (ML-DSA hash + legacyPublicKey set).
+ *              Use this for contract calls (balanceOf, approve, etc.).
+ * btcAddress — Bitcoin p2tr string (opt1p...).
+ *              Use this for refundTo in sendTransaction.
  */
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
+import { WalletConnectProvider } from '@btc-vision/walletconnect/browser';
+import { useWalletConnect } from '@btc-vision/walletconnect';
+import type { Address } from '@btc-vision/transaction';
 
 export interface WalletState {
-    connected: boolean;
-    address: string;
-    connect: () => Promise<void>;
+    connected:  boolean;
+    address:    Address | null;   // full Address: ML-DSA hash + legacyPublicKey
+    btcAddress: string;           // opt1p... p2tr — for refundTo / display
+    connect:    () => void;
     disconnect: () => void;
 }
 
-declare global {
-    interface Window {
-        opnet?: {
-            requestAccounts: () => Promise<string[]>;
-            getAccounts: () => Promise<string[]>;
-            disconnect?: () => void;
-            on?: (event: string, cb: (...args: unknown[]) => void) => void;
-        };
-    }
-}
-
 const WalletContext = createContext<WalletState>({
-    connected: false,
-    address: '',
-    connect: async () => {},
+    connected:  false,
+    address:    null,
+    btcAddress: '',
+    connect:    () => {},
     disconnect: () => {},
 });
 
-/**
- * Wait up to `timeoutMs` for window.opnet to be injected by the extension.
- * Browser extensions inject after page load, so a short poll is needed.
- */
-function waitForOpnet(timeoutMs = 3000): Promise<typeof window.opnet> {
-    return new Promise((resolve) => {
-        if (window.opnet) { resolve(window.opnet); return; }
-        const interval = setInterval(() => {
-            if (window.opnet) { clearInterval(interval); clearTimeout(timer); resolve(window.opnet); }
-        }, 100);
-        const timer = setTimeout(() => { clearInterval(interval); resolve(undefined); }, timeoutMs);
-    });
+function InnerProvider({ children }: { children: ReactNode }) {
+    const wc = useWalletConnect();
+
+    const value: WalletState = {
+        connected:  !!wc.address,
+        address:    wc.address,
+        btcAddress: wc.walletAddress ?? '',
+        connect:    wc.openConnectModal,
+        disconnect: wc.disconnect,
+    };
+
+    return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-    const [address, setAddress] = useState('');
-    const listenerAttached = useRef(false);
-
-    const connect = useCallback(async () => {
-        const opnet = await waitForOpnet();
-        if (!opnet) {
-            alert('OP_WALLET extension not found. Install it from https://opnet.org');
-            return;
-        }
-        try {
-            const accounts = await opnet.requestAccounts();
-            if (accounts.length > 0) setAddress(accounts[0]);
-        } catch (e) {
-            console.error('Wallet connect error:', e);
-        }
-    }, []);
-
-    const disconnect = useCallback(() => {
-        window.opnet?.disconnect?.();
-        setAddress('');
-    }, []);
-
-    // Restore session if wallet already unlocked — wait for extension to inject first
-    useEffect(() => {
-        waitForOpnet().then((opnet) => {
-            if (!opnet) return;
-
-            opnet.getAccounts()
-                .then((accounts) => { if (accounts.length > 0) setAddress(accounts[0]); })
-                .catch(() => {});
-
-            // Only attach account-change listener once
-            if (!listenerAttached.current) {
-                listenerAttached.current = true;
-                opnet.on?.('accountsChanged', () => {
-                    opnet.getAccounts()
-                        .then((accounts) => setAddress(accounts[0] ?? ''))
-                        .catch(() => setAddress(''));
-                });
-            }
-        });
-    }, []);
-
     return (
-        <WalletContext.Provider value={{ connected: address !== '', address, connect, disconnect }}>
-            {children}
-        </WalletContext.Provider>
+        <WalletConnectProvider theme="dark">
+            <InnerProvider>{children}</InnerProvider>
+        </WalletConnectProvider>
     );
 }
 
