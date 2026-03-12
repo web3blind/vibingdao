@@ -12,7 +12,6 @@ import {
     getTokenReadContract,
     getTokenWriteContract,
     resolveP2op,
-    getProvider,
     NETWORK,
 } from './opnet';
 import type { DaoConfig } from './daos';
@@ -241,36 +240,49 @@ export function useTokenAllowance(dao: DaoConfig, walletP2op: string) {
 
 const MAX_U256 = (1n << 256n) - 1n;
 
+// Minimal params required by TransactionParameters when using OP_WALLET browser extension.
+// refundTo = wallet's p2tr address (change goes back there).
+// maximumAllowedSatToSpend = 0n means "just cover fees" (wallet/SDK adds gas on top).
+function txParams(walletP2op: string) {
+    return {
+        signer:                   null,
+        mldsaSigner:              null,
+        refundTo:                 walletP2op,
+        maximumAllowedSatToSpend: 0n,
+        network:                  NETWORK,
+    } as const;
+}
+
 export function useDaoActions(dao: DaoConfig, walletP2op: string) {
     const approve = useCallback(async () => {
         const c       = await getTokenWriteContract(dao.tokenP2op, walletP2op);
         const daoAddr = await resolveP2op(dao.daoP2op);
         const sim     = await c.approve(daoAddr, MAX_U256);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao, walletP2op]);
 
     const stake = useCallback(async (amount: bigint) => {
         const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
         const sim = await c.stake(amount);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao.daoP2op, walletP2op]);
 
     const unstake = useCallback(async (amount: bigint) => {
         const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
         const sim = await c.unstake(amount);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao.daoP2op, walletP2op]);
 
     const vote = useCallback(async (proposalId: bigint, support: boolean) => {
         const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
         const sim = await c.vote(proposalId, support);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao.daoP2op, walletP2op]);
 
     const executeProposal = useCallback(async (proposalId: bigint) => {
         const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
         const sim = await c.executeProposal(proposalId);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao.daoP2op, walletP2op]);
 
     const createProposal = useCallback(async (
@@ -287,7 +299,7 @@ export function useDaoActions(dao: DaoConfig, walletP2op: string) {
         const tokenAddr     = token     ? await resolveP2op(token).catch(() => zeroAddr)     : zeroAddr;
         const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
         const sim = await c.createProposal(proposalType, descriptionHash, amount, recipientAddr, tokenAddr);
-        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+        return sim.sendTransaction(txParams(walletP2op));
     }, [dao.daoP2op, walletP2op]);
 
     return { approve, stake, unstake, vote, executeProposal, createProposal };

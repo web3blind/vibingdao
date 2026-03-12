@@ -36,17 +36,23 @@ export function getProvider(): JSONRpcProvider {
 // ── Address resolution ──────────────────────────────────────────────────────
 // Works for opt1sq... (p2op contracts) and opt1p... (p2tr wallets).
 
-const _addrCache = new Map<string, string>(); // p2op → tweakedPubkey hex
+const _addrCache = new Map<string, Address>(); // p2op → resolved Address
 
 export async function resolveP2op(p2op: string): Promise<Address> {
     if (!p2op) throw new Error('Empty address');
-    if (_addrCache.has(p2op)) return Address.fromString('0x' + _addrCache.get(p2op)!);
-    const info    = await getProvider().getPublicKeysInfoRaw(p2op);
+    if (_addrCache.has(p2op)) return _addrCache.get(p2op)!;
+    const info = await getProvider().getPublicKeysInfoRaw(p2op);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tweaked = (info[p2op] as any)?.tweakedPubkey as string | undefined;
-    if (!tweaked) throw new Error(`Cannot resolve: ${p2op}`);
-    _addrCache.set(p2op, tweaked);
-    return Address.fromString('0x' + tweaked);
+    const entry = info[p2op] as any;
+    if (!entry || 'error' in entry) throw new Error(`Cannot resolve: ${p2op}`);
+    // Use mldsaHashedPublicKey when present (ML-DSA wallet/contract), else fall back to tweakedPubkey.
+    // Always pass tweakedPubkey as the second (legacy/secp256k1) param so address.p2tr() works.
+    const addrContent: string = entry.mldsaHashedPublicKey ?? entry.tweakedPubkey;
+    const legacyKey:   string = entry.tweakedPubkey;
+    if (!addrContent || !legacyKey) throw new Error(`Cannot resolve address content for: ${p2op}`);
+    const addr = Address.fromString('0x' + addrContent, '0x' + legacyKey);
+    _addrCache.set(p2op, addr);
+    return addr;
 }
 
 // Pre-warm the cache for all known addresses so UI doesn't wait on first render.
