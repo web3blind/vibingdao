@@ -1,18 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './index.css';
 import { ToastProvider, useToast } from './ToastContext';
 import { WalletProvider, useWallet } from './useWallet';
 import { ErrorBoundary } from './ErrorBoundary';
-import { useDaoStats, useProposals, useStakedBalance, useDaoActions } from './useDao';
+import { DAO_CONFIGS } from './daos';
+import type { DaoConfig } from './daos';
+import { prefetchAddresses } from './opnet';
+import {
+    useDaoStats,
+    useProposals,
+    useStakedBalance,
+    useTokenBalance,
+    useTokenAllowance,
+    useAllStakedBalances,
+    useDaoActions,
+} from './useDao';
 import type { Proposal } from './useDao';
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Pre-warm address cache for all known contracts
+prefetchAddresses(DAO_CONFIGS.flatMap((d) => [d.daoP2op, d.tokenP2op]));
+
+// ── Formatters ──────────────────────────────────────────────────────────────
 
 function fmt(n: bigint, decimals = 8): string {
     if (n === 0n) return '0';
-    const d = 10n ** BigInt(decimals);
+    const d     = 10n ** BigInt(decimals);
     const whole = n / d;
-    const frac = (n % d).toString().padStart(decimals, '0').replace(/0+$/, '');
+    const frac  = (n % d).toString().padStart(decimals, '0').replace(/0+$/, '');
     return frac ? `${whole}.${frac}` : `${whole}`;
 }
 
@@ -27,7 +41,7 @@ function votePercent(p: Proposal): number {
     return Number((p.yesVotes * 100n) / total);
 }
 
-// ── Wallet header ──────────────────────────────────────────────────────────
+// ── Wallet bar ──────────────────────────────────────────────────────────────
 
 function WalletBar() {
     const { connected, address, connect, disconnect } = useWallet();
@@ -41,319 +55,137 @@ function WalletBar() {
     );
 }
 
-// ── Stats row ──────────────────────────────────────────────────────────────
+// ── Home page ───────────────────────────────────────────────────────────────
 
-function StatsRow({
-    stats,
-    loading,
-}: {
-    stats: ReturnType<typeof useDaoStats>['stats'];
-    loading: boolean;
-}) {
-    if (loading) return <div className="loading">Loading stats…</div>;
-    return (
-        <div className="stats">
-            <div className="stat">
-                <div className="stat-label">Total Staked</div>
-                <div className="stat-value">{stats ? fmt(stats.totalStaked) : '–'}</div>
-            </div>
-            <div className="stat">
-                <div className="stat-label">Proposals</div>
-                <div className="stat-value">{stats ? String(stats.proposalCount) : '–'}</div>
-            </div>
-            <div className="stat">
-                <div className="stat-label">Staking Token</div>
-                <div className="stat-value" style={{ fontSize: 12, wordBreak: 'break-all' }}>
-                    {stats ? shortAddr(stats.stakingToken) : '–'}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-// ── Single proposal card ───────────────────────────────────────────────────
-
-function ProposalCard({
-    proposal,
-    onVote,
-    onExecute,
-    connected,
-}: {
-    proposal: Proposal;
-    onVote: (id: bigint, support: boolean) => void;
-    onExecute: (id: bigint) => void;
-    connected: boolean;
-}) {
-    const pct = votePercent(proposal);
-    // A proposal is active if not yet executed. Deadline vs block number would
-    // require an RPC call; we show both action buttons and let the contract revert.
-    const active = !proposal.executed;
-
-    return (
-        <div className="proposal">
-            <div className="proposal-header">
-                <span className="proposal-id">#{String(proposal.id)}</span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                    <span
-                        className={`badge badge-${proposal.proposalType === 0 ? 'text' : 'treasury'}`}
-                    >
-                        {proposal.proposalType === 0 ? 'Text' : 'Treasury'}
-                    </span>
-                    {proposal.executed ? (
-                        <span className={`badge ${pct > 50 ? 'badge-passed' : 'badge-failed'}`}>
-                            {pct > 50 ? 'Passed' : 'Failed'}
-                        </span>
-                    ) : (
-                        <span className="badge badge-active">Active</span>
-                    )}
-                </div>
-            </div>
-
-            <div className="hash-display">Hash: 0x{proposal.descriptionHash}</div>
-            {proposal.proposalType === 1 && proposal.amount > 0n && (
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                    Transfer: {fmt(proposal.amount)} tokens
-                </div>
-            )}
-
-            <div className="vote-bar">
-                <div className="vote-bar-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <div className="vote-counts">
-                <span className="vote-yes">
-                    YES {fmt(proposal.yesVotes)} ({pct}%)
-                </span>
-                <span className="vote-no">NO {fmt(proposal.noVotes)}</span>
-            </div>
-
-            {connected && active && (
-                <div className="proposal-actions">
-                    <button
-                        className="btn-yes btn-sm"
-                        onClick={() => onVote(proposal.id, true)}
-                    >
-                        Vote YES
-                    </button>
-                    <button
-                        className="btn-no btn-sm"
-                        onClick={() => onVote(proposal.id, false)}
-                    >
-                        Vote NO
-                    </button>
-                    <button className="btn-outline btn-sm" onClick={() => onExecute(proposal.id)}>
-                        Execute
-                    </button>
-                </div>
-            )}
-        </div>
-    );
-}
-
-// ── Stake / Unstake panel ──────────────────────────────────────────────────
-
-function StakePanel({ address }: { address: string }) {
-    const { show } = useToast();
-    const { stake, unstake } = useDaoActions(address);
-    const balance = useStakedBalance(address);
-    const [amount, setAmount] = useState('');
-    const [busy, setBusy] = useState(false);
-
-    const handle = async (fn: (n: bigint) => Promise<unknown>, label: string) => {
-        const num = Number(amount);
-        if (!amount || isNaN(num) || num <= 0) {
-            show('Enter a valid positive amount', 'error');
-            return;
-        }
-        setBusy(true);
-        try {
-            const satoshis = BigInt(Math.round(num * 1e8));
-            await fn(satoshis);
-            show(`${label} submitted! Wait for confirmation.`, 'success');
-            setAmount('');
-        } catch (e) {
-            show(`${label} failed: ${(e as Error).message}`, 'error');
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    return (
-        <div className="card">
-            <div className="card-title">Stake / Unstake</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
-                Your staked balance: <strong style={{ color: 'var(--accent)' }}>{fmt(balance)} VIBE</strong>
-            </div>
-            <div className="form-group">
-                <label>Amount (VIBE)</label>
-                <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder="0.0"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    disabled={busy}
-                />
-            </div>
-            <div className="row" style={{ marginTop: 4 }}>
-                <button onClick={() => handle(stake, 'Stake')} disabled={busy}>
-                    {busy ? '…' : 'Stake'}
-                </button>
-                <button
-                    className="btn-outline"
-                    onClick={() => handle(unstake, 'Unstake')}
-                    disabled={busy}
-                >
-                    {busy ? '…' : 'Unstake'}
-                </button>
-            </div>
-            <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>
-                You must approve this contract on the VIBE token before staking.
-            </p>
-        </div>
-    );
-}
-
-// ── Create proposal panel ──────────────────────────────────────────────────
-
-function CreateProposalPanel({ address }: { address: string }) {
-    const { show } = useToast();
-    const { createProposal } = useDaoActions(address);
-    const [type, setType] = useState<0 | 1>(0);
-    const [desc, setDesc] = useState('');
-    const [amount, setAmount] = useState('');
-    const [recipient, setRecipient] = useState('');
-    const [token, setToken] = useState('');
-    const [busy, setBusy] = useState(false);
-
-    const submit = async () => {
-        if (!desc.trim()) { show('Enter a description', 'error'); return; }
-        setBusy(true);
-        try {
-            // Derive a deterministic hash from the description text
-            const enc = new TextEncoder().encode(desc.slice(0, 32).padEnd(32, '\0'));
-            let hash = 0n;
-            for (const b of enc) hash = (hash << 8n) | BigInt(b);
-
-            const amountSats = amount ? BigInt(Math.round(Number(amount) * 1e8)) : 0n;
-            await createProposal(type, hash, amountSats, recipient, token);
-            show('Proposal created! Wait for confirmation.', 'success');
-            setDesc(''); setAmount(''); setRecipient(''); setToken('');
-        } catch (e) {
-            show(`Failed: ${(e as Error).message}`, 'error');
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    return (
-        <div className="card">
-            <div className="card-title">Create Proposal</div>
-            <div className="form-group">
-                <label>Type</label>
-                <select
-                    value={type}
-                    onChange={(e) => setType(Number(e.target.value) as 0 | 1)}
-                    disabled={busy}
-                >
-                    <option value={0}>Text — informational, simple majority</option>
-                    <option value={1}>Treasury — token transfer, requires quorum</option>
-                </select>
-            </div>
-            <div className="form-group">
-                <label>Description</label>
-                <textarea
-                    placeholder="Describe the proposal…"
-                    value={desc}
-                    onChange={(e) => setDesc(e.target.value)}
-                    disabled={busy}
-                />
-            </div>
-            {type === 1 && (
-                <>
-                    <div className="form-group">
-                        <label>Amount (tokens)</label>
-                        <input
-                            type="number"
-                            min="0"
-                            step="any"
-                            placeholder="0.0"
-                            value={amount}
-                            onChange={(e) => setAmount(e.target.value)}
-                            disabled={busy}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Recipient address</label>
-                        <input
-                            placeholder="op1... or 0x..."
-                            value={recipient}
-                            onChange={(e) => setRecipient(e.target.value)}
-                            disabled={busy}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Token address (blank = VIBE staking token)</label>
-                        <input
-                            placeholder="op1... or 0x..."
-                            value={token}
-                            onChange={(e) => setToken(e.target.value)}
-                            disabled={busy}
-                        />
-                    </div>
-                </>
-            )}
-            <button onClick={submit} disabled={busy}>
-                {busy ? 'Submitting…' : 'Create Proposal'}
-            </button>
-        </div>
-    );
-}
-
-// ── Root App ───────────────────────────────────────────────────────────────
-
-function DaoApp() {
-    const { show } = useToast();
+function HomePage({ onSelectDao }: { onSelectDao: (dao: DaoConfig) => void }) {
     const { connected, address } = useWallet();
-    const { stats, loading: statsLoading, refresh } = useDaoStats();
-    const { proposals, loading: propsLoading } = useProposals(stats?.proposalCount ?? 0n);
-    const { vote, executeProposal } = useDaoActions(address);
+    const stakedIn = useAllStakedBalances(DAO_CONFIGS, address);
+
+    const myDaos   = DAO_CONFIGS.filter((d) => (stakedIn[d.id] ?? 0n) > 0n);
+    const allDaos  = DAO_CONFIGS;
+
+    return (
+        <>
+            {connected && myDaos.length > 0 && (
+                <section>
+                    <div className="section-header">
+                        <span className="section-title">Your DAOs</span>
+                    </div>
+                    <div className="dao-grid">
+                        {myDaos.map((dao) => (
+                            <DaoCard
+                                key={dao.id}
+                                dao={dao}
+                                staked={stakedIn[dao.id] ?? 0n}
+                                onClick={() => onSelectDao(dao)}
+                                highlight
+                            />
+                        ))}
+                    </div>
+                    <hr />
+                </section>
+            )}
+
+            <div className="section-header">
+                <span className="section-title">All DAOs</span>
+                {!connected && <span className="muted-note">Connect wallet to stake</span>}
+            </div>
+            <div className="dao-grid">
+                {allDaos.map((dao) => (
+                    <DaoCard
+                        key={dao.id}
+                        dao={dao}
+                        staked={stakedIn[dao.id] ?? 0n}
+                        onClick={() => onSelectDao(dao)}
+                        highlight={false}
+                    />
+                ))}
+            </div>
+        </>
+    );
+}
+
+function DaoCard({
+    dao, staked, onClick, highlight,
+}: {
+    dao: DaoConfig;
+    staked: bigint;
+    onClick: () => void;
+    highlight: boolean;
+}) {
+    const { stats } = useDaoStats(dao);
+    return (
+        <button
+            className={`dao-card${highlight ? ' dao-card-highlight' : ''}`}
+            style={{ '--dao-color': dao.color } as React.CSSProperties}
+            onClick={onClick}
+        >
+            <div className="dao-icon">{dao.icon}</div>
+            <div className="dao-card-body">
+                <div className="dao-card-name">{dao.name}</div>
+                <div className="dao-card-symbol">{dao.symbol}</div>
+                {stats && (
+                    <div className="dao-card-stats">
+                        <span>{String(stats.proposalCount)} proposals</span>
+                        <span>{fmt(stats.totalStaked)} staked</span>
+                    </div>
+                )}
+                {staked > 0n && (
+                    <div className="dao-card-yours">
+                        Your stake: <strong>{fmt(staked)} {dao.symbol}</strong>
+                    </div>
+                )}
+            </div>
+            <div className="dao-card-arrow">→</div>
+        </button>
+    );
+}
+
+// ── DAO detail page ─────────────────────────────────────────────────────────
+
+function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
+    const { connected, address } = useWallet();
+    const { stats, loading: statsLoading, refresh } = useDaoStats(dao);
+    const { proposals, loading: propsLoading } = useProposals(dao, stats?.proposalCount ?? 0n);
     const [tab, setTab] = useState<'proposals' | 'stake' | 'create'>('proposals');
 
-    const handleVote = async (id: bigint, support: boolean) => {
-        try {
-            await vote(id, support);
-            show(`Vote ${support ? 'YES' : 'NO'} submitted`, 'success');
-            refresh();
-        } catch (e) {
-            show(`Vote failed: ${(e as Error).message}`, 'error');
-        }
-    };
-
-    const handleExecute = async (id: bigint) => {
-        try {
-            await executeProposal(id);
-            show('Execution submitted', 'success');
-            refresh();
-        } catch (e) {
-            show(`Execute failed: ${(e as Error).message}`, 'error');
-        }
-    };
-
     return (
-        <div className="app">
-            <header>
-                <div className="logo">Vibing<span>DAO</span></div>
-                <WalletBar />
-            </header>
+        <div>
+            {/* Back + header */}
+            <div className="dao-page-header">
+                <button className="btn-outline btn-sm back-btn" onClick={onBack}>← Back</button>
+                <div className="dao-page-title" style={{ '--dao-color': dao.color } as React.CSSProperties}>
+                    <span className="dao-page-icon">{dao.icon}</span>
+                    <div>
+                        <div className="dao-page-name">{dao.name}</div>
+                        <div className="dao-page-token">staking {dao.symbol}</div>
+                    </div>
+                </div>
+            </div>
 
-            <StatsRow stats={stats} loading={statsLoading} />
+            {/* Stats */}
+            {statsLoading
+                ? <div className="loading">Loading…</div>
+                : stats && (
+                    <div className="stats" style={{ marginBottom: 24 }}>
+                        <div className="stat">
+                            <div className="stat-label">Total Staked</div>
+                            <div className="stat-value">{fmt(stats.totalStaked)}</div>
+                        </div>
+                        <div className="stat">
+                            <div className="stat-label">Proposals</div>
+                            <div className="stat-value">{String(stats.proposalCount)}</div>
+                        </div>
+                        {connected && (
+                            <StakedStatCell dao={dao} address={address} />
+                        )}
+                    </div>
+                )
+            }
 
+            {/* Tabs */}
             <div className="tabs">
-                <button
-                    className={`tab${tab === 'proposals' ? ' active' : ''}`}
-                    onClick={() => setTab('proposals')}
-                >
+                <button className={`tab${tab === 'proposals' ? ' active' : ''}`} onClick={() => setTab('proposals')}>
                     Proposals
                 </button>
                 <button
@@ -376,43 +208,335 @@ function DaoApp() {
                 <>
                     <div className="section-header">
                         <span className="section-title">Governance Proposals</span>
-                        <button className="btn-outline btn-sm" onClick={refresh}>
-                            Refresh
-                        </button>
+                        <button className="btn-outline btn-sm" onClick={refresh}>Refresh</button>
                     </div>
-                    {propsLoading ? (
-                        <div className="loading">Loading proposals…</div>
-                    ) : proposals.length === 0 ? (
-                        <div className="empty">
-                            No proposals yet. Connect your wallet and create the first one.
-                        </div>
-                    ) : (
-                        <div className="proposal-list">
-                            {[...proposals].reverse().map((p) => (
-                                <ProposalCard
-                                    key={String(p.id)}
-                                    proposal={p}
-                                    onVote={handleVote}
-                                    onExecute={handleExecute}
-                                    connected={connected}
-                                />
-                            ))}
-                        </div>
-                    )}
+                    {propsLoading
+                        ? <div className="loading">Loading proposals…</div>
+                        : proposals.length === 0
+                            ? <div className="empty">No proposals yet. Create the first one!</div>
+                            : (
+                                <div className="proposal-list">
+                                    {[...proposals].reverse().map((p) => (
+                                        <ProposalCard
+                                            key={String(p.id)}
+                                            proposal={p}
+                                            dao={dao}
+                                            connected={connected}
+                                            walletP2op={address}
+                                            onRefresh={refresh}
+                                        />
+                                    ))}
+                                </div>
+                            )
+                    }
                 </>
             )}
 
             {tab === 'stake' && (
                 connected
-                    ? <StakePanel address={address} />
+                    ? <StakePanel dao={dao} address={address} />
                     : <div className="empty">Connect your OP_WALLET to stake.</div>
             )}
 
             {tab === 'create' && (
                 connected
-                    ? <CreateProposalPanel address={address} />
+                    ? <CreateProposalPanel dao={dao} address={address} />
                     : <div className="empty">Connect your OP_WALLET to create proposals.</div>
             )}
+        </div>
+    );
+}
+
+function StakedStatCell({ dao, address }: { dao: DaoConfig; address: string }) {
+    const staked = useStakedBalance(dao, address);
+    return (
+        <div className="stat">
+            <div className="stat-label">Your Stake</div>
+            <div className="stat-value">{fmt(staked)}</div>
+        </div>
+    );
+}
+
+// ── Proposal card ────────────────────────────────────────────────────────────
+
+function ProposalCard({
+    proposal, dao, connected, walletP2op, onRefresh,
+}: {
+    proposal: Proposal;
+    dao: DaoConfig;
+    connected: boolean;
+    walletP2op: string;
+    onRefresh: () => void;
+}) {
+    const { show } = useToast();
+    const { vote, executeProposal } = useDaoActions(dao, walletP2op);
+    const pct    = votePercent(proposal);
+    const active = !proposal.executed;
+
+    const handleVote = async (support: boolean) => {
+        try {
+            await vote(proposal.id, support);
+            show(`Vote ${support ? 'YES' : 'NO'} submitted`, 'success');
+            onRefresh();
+        } catch (e) { show(`Vote failed: ${(e as Error).message}`, 'error'); }
+    };
+    const handleExecute = async () => {
+        try {
+            await executeProposal(proposal.id);
+            show('Execution submitted', 'success');
+            onRefresh();
+        } catch (e) { show(`Execute failed: ${(e as Error).message}`, 'error'); }
+    };
+
+    return (
+        <div className="proposal">
+            <div className="proposal-header">
+                <span className="proposal-id">#{String(proposal.id)}</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                    <span className={`badge badge-${proposal.proposalType === 0 ? 'text' : 'treasury'}`}>
+                        {proposal.proposalType === 0 ? 'Text' : 'Treasury'}
+                    </span>
+                    {proposal.executed
+                        ? <span className={`badge ${pct > 50 ? 'badge-passed' : 'badge-failed'}`}>{pct > 50 ? 'Passed' : 'Failed'}</span>
+                        : <span className="badge badge-active">Active</span>
+                    }
+                </div>
+            </div>
+            <div className="hash-display">Hash: 0x{proposal.descriptionHash}</div>
+            {proposal.proposalType === 1 && proposal.amount > 0n && (
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                    Transfer: {fmt(proposal.amount)} {dao.symbol}
+                </div>
+            )}
+            <div className="vote-bar">
+                <div className="vote-bar-fill" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="vote-counts">
+                <span className="vote-yes">YES {fmt(proposal.yesVotes)} ({pct}%)</span>
+                <span className="vote-no">NO {fmt(proposal.noVotes)}</span>
+            </div>
+            {connected && active && (
+                <div className="proposal-actions">
+                    <button className="btn-yes btn-sm"     onClick={() => handleVote(true)}>Vote YES</button>
+                    <button className="btn-no btn-sm"      onClick={() => handleVote(false)}>Vote NO</button>
+                    <button className="btn-outline btn-sm" onClick={handleExecute}>Execute</button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Stake / Unstake panel ────────────────────────────────────────────────────
+
+function StakePanel({ dao, address }: { dao: DaoConfig; address: string }) {
+    const { show }  = useToast();
+    const { approve, stake, unstake } = useDaoActions(dao, address);
+    const walletBal = useTokenBalance(dao, address);
+    const stakedBal = useStakedBalance(dao, address);
+    const { allowance, refreshAllowance } = useTokenAllowance(dao, address);
+    const [amount, setAmount] = useState('');
+    const [busy,   setBusy]   = useState(false);
+    const [step,   setStep]   = useState('');
+
+    const amountSats = (): bigint | null => {
+        const n = Number(amount);
+        if (!amount || isNaN(n) || n <= 0) return null;
+        return BigInt(Math.round(n * 1e8));
+    };
+
+    const handleApprove = async () => {
+        setBusy(true); setStep('Approving…');
+        try {
+            await approve();
+            show('Approval submitted! Wait for confirmation, then stake.', 'success');
+            setTimeout(refreshAllowance, 4000);
+        } catch (e) { show(`Approve failed: ${(e as Error).message}`, 'error'); }
+        finally { setBusy(false); setStep(''); }
+    };
+
+    const handleStake = async () => {
+        const sats = amountSats();
+        if (!sats) { show('Enter a valid amount', 'error'); return; }
+        setBusy(true); setStep('Staking…');
+        try {
+            await stake(sats);
+            show('Stake submitted! Wait for confirmation.', 'success');
+            setAmount('');
+        } catch (e) { show(`Stake failed: ${(e as Error).message}`, 'error'); }
+        finally { setBusy(false); setStep(''); }
+    };
+
+    const handleUnstake = async () => {
+        const sats = amountSats();
+        if (!sats) { show('Enter a valid amount', 'error'); return; }
+        setBusy(true); setStep('Unstaking…');
+        try {
+            await unstake(sats);
+            show('Unstake submitted! Wait for confirmation.', 'success');
+            setAmount('');
+        } catch (e) { show(`Unstake failed: ${(e as Error).message}`, 'error'); }
+        finally { setBusy(false); setStep(''); }
+    };
+
+    const needsApprove = allowance === 0n;
+    const sats         = amountSats() ?? 0n;
+
+    return (
+        <div className="card">
+            <div className="card-title">Stake / Unstake {dao.symbol}</div>
+
+            <div className="balance-row">
+                <div className="balance-item">
+                    <span className="balance-label">Wallet balance</span>
+                    <span className="balance-value">{fmt(walletBal)} {dao.symbol}</span>
+                </div>
+                <div className="balance-item">
+                    <span className="balance-label">Staked</span>
+                    <span className="balance-value" style={{ color: 'var(--accent)' }}>{fmt(stakedBal)} {dao.symbol}</span>
+                </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 16 }}>
+                <label>Amount ({dao.symbol})</label>
+                <input
+                    type="number" min="0" step="any" placeholder="0.0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    disabled={busy}
+                />
+            </div>
+
+            {needsApprove && (
+                <div className="approve-notice">
+                    Step 1 — Approve the DAO to spend your {dao.symbol} (one-time):
+                    <button onClick={handleApprove} disabled={busy} style={{ marginLeft: 10 }}>
+                        {busy && step === 'Approving…' ? 'Approving…' : `Approve ${dao.symbol}`}
+                    </button>
+                </div>
+            )}
+
+            <div className="row" style={{ marginTop: 12 }}>
+                <button onClick={handleStake} disabled={busy || needsApprove || sats === 0n}>
+                    {busy && step === 'Staking…' ? 'Staking…' : 'Stake'}
+                </button>
+                <button className="btn-outline" onClick={handleUnstake} disabled={busy || sats === 0n}>
+                    {busy && step === 'Unstaking…' ? 'Unstaking…' : 'Unstake'}
+                </button>
+            </div>
+
+            {busy && <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>{step}</p>}
+        </div>
+    );
+}
+
+// ── Create proposal panel ────────────────────────────────────────────────────
+
+function CreateProposalPanel({ dao, address }: { dao: DaoConfig; address: string }) {
+    const { show } = useToast();
+    const { createProposal } = useDaoActions(dao, address);
+    const [type,      setType]      = useState<0 | 1>(0);
+    const [desc,      setDesc]      = useState('');
+    const [amount,    setAmount]    = useState('');
+    const [recipient, setRecipient] = useState('');
+    const [token,     setToken]     = useState('');
+    const [busy,      setBusy]      = useState(false);
+
+    const submit = async () => {
+        if (!desc.trim()) { show('Enter a description', 'error'); return; }
+        setBusy(true);
+        try {
+            const enc = new TextEncoder().encode(desc.slice(0, 32).padEnd(32, '\0'));
+            let hash = 0n;
+            for (const b of enc) hash = (hash << 8n) | BigInt(b);
+            const amountSats = amount ? BigInt(Math.round(Number(amount) * 1e8)) : 0n;
+            await createProposal(type, hash, amountSats, recipient, token);
+            show('Proposal submitted! Wait for confirmation.', 'success');
+            setDesc(''); setAmount(''); setRecipient(''); setToken('');
+        } catch (e) { show(`Failed: ${(e as Error).message}`, 'error'); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <div className="card">
+            <div className="card-title">Create Proposal</div>
+            <div className="form-group">
+                <label>Type</label>
+                <select value={type} onChange={(e) => setType(Number(e.target.value) as 0 | 1)} disabled={busy}>
+                    <option value={0}>Text — informational, simple majority</option>
+                    <option value={1}>Treasury — token transfer, requires quorum</option>
+                </select>
+            </div>
+            <div className="form-group">
+                <label>Description</label>
+                <textarea
+                    placeholder="Describe the proposal…"
+                    value={desc} onChange={(e) => setDesc(e.target.value)} disabled={busy}
+                />
+            </div>
+            {type === 1 && (
+                <>
+                    <div className="form-group">
+                        <label>Amount ({dao.symbol})</label>
+                        <input type="number" min="0" step="any" placeholder="0.0"
+                            value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} />
+                    </div>
+                    <div className="form-group">
+                        <label>Recipient (opt1...)</label>
+                        <input placeholder="opt1..."
+                            value={recipient} onChange={(e) => setRecipient(e.target.value)} disabled={busy} />
+                    </div>
+                    <div className="form-group">
+                        <label>Token (blank = {dao.symbol})</label>
+                        <input placeholder="opt1... or leave blank"
+                            value={token} onChange={(e) => setToken(e.target.value)} disabled={busy} />
+                    </div>
+                </>
+            )}
+            <button onClick={submit} disabled={busy}>
+                {busy ? 'Submitting…' : 'Create Proposal'}
+            </button>
+        </div>
+    );
+}
+
+// ── Root with hash routing ───────────────────────────────────────────────────
+
+function DaoApp() {
+    const [selectedDao, setSelectedDao] = useState<DaoConfig | null>(null);
+
+    // Sync with URL hash so back/forward works
+    useEffect(() => {
+        const onHash = () => {
+            const hash = window.location.hash;
+            if (hash.startsWith('#/dao/')) {
+                const id  = hash.slice(6);
+                const dao = DAO_CONFIGS.find((d) => d.id === id) ?? null;
+                setSelectedDao(dao);
+            } else {
+                setSelectedDao(null);
+            }
+        };
+        window.addEventListener('hashchange', onHash);
+        onHash(); // handle initial load
+        return () => window.removeEventListener('hashchange', onHash);
+    }, []);
+
+    const goHome = () => { window.location.hash = '#/'; };
+    const goDao  = (dao: DaoConfig) => { window.location.hash = `#/dao/${dao.id}`; };
+
+    return (
+        <div className="app">
+            <header>
+                <div className="logo" style={{ cursor: 'pointer' }} onClick={goHome}>
+                    Vibing<span>DAO</span>
+                </div>
+                <WalletBar />
+            </header>
+
+            {selectedDao
+                ? <DaoPage dao={selectedDao} onBack={goHome} />
+                : <HomePage onSelectDao={goDao} />
+            }
         </div>
     );
 }

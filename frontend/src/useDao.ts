@@ -1,19 +1,27 @@
 /**
- * DAO read/write hooks.
+ * DAO + OP20 hooks — all parameterised by DaoConfig / address strings.
  * Rules:
  *   - signer: null / mldsaSigner: null in sendTransaction (wallet signs)
  *   - always simulate before send
  *   - never raw PSBT
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Address } from '@btc-vision/transaction';
-import { getReadContract, getWriteContract, getProvider, NETWORK } from './opnet';
+import {
+    getDaoReadContract,
+    getDaoWriteContract,
+    getTokenReadContract,
+    getTokenWriteContract,
+    resolveP2op,
+    getProvider,
+    NETWORK,
+} from './opnet';
+import type { DaoConfig } from './daos';
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── Shared types ────────────────────────────────────────────────────────────
 
 export interface Proposal {
     id: bigint;
-    proposalType: number;   // 0 = text, 1 = treasury
+    proposalType: number;
     yesVotes: bigint;
     noVotes: bigint;
     deadline: bigint;
@@ -28,219 +36,259 @@ export interface DaoStats {
     stakingToken: string;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Parse the packed `getProposal` BYTES response.
- *  Layout: u8 proposalType | u256 yes | u256 no | u256 deadline |
- *          bool executed | u256 amount | u256 descHash
- */
 function parseProposalBytes(bytes: Uint8Array, id: bigint): Proposal {
     if (!bytes || bytes.length < 162) {
         return { id, proposalType: 0, yesVotes: 0n, noVotes: 0n, deadline: 0n, executed: false, amount: 0n, descriptionHash: '' };
     }
     let offset = 0;
     const proposalType = bytes[offset++];
-
     const readU256 = (): bigint => {
         let val = 0n;
         for (let i = 0; i < 32; i++) val = (val << 8n) | BigInt(bytes[offset++]);
         return val;
     };
-
     const yesVotes = readU256();
-    const noVotes = readU256();
+    const noVotes  = readU256();
     const deadline = readU256();
     const executed = bytes[offset++] !== 0;
-    const amount = readU256();
-    const descHashBuf = bytes.slice(offset, offset + 32);
-    const descriptionHash = Array.from(descHashBuf)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-
-    return { id, proposalType, yesVotes, noVotes, deadline, executed, amount, descriptionHash };
+    const amount   = readU256();
+    const descHash = Array.from(bytes.slice(offset, offset + 32))
+        .map((b) => b.toString(16).padStart(2, '0')).join('');
+    return { id, proposalType, yesVotes, noVotes, deadline, executed, amount, descriptionHash: descHash };
 }
 
-/** Safely convert address string to Address object; returns null on failure. */
-function tryAddrFromStr(s: string): Address | null {
-    if (!s) return null;
-    try {
-        return Address.fromString(s);
-    } catch {
-        return null;
+function bigVal(r: unknown): bigint {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const v = (r as any)?.properties;
+    if (v) {
+        const first = Object.values(v)[0];
+        if (first !== undefined) return BigInt(first as string | number | bigint);
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = (r as any)?.result;
+    if (res !== undefined) return BigInt(res);
+    return 0n;
 }
 
-// ── Stats hook ─────────────────────────────────────────────────────────────
+// ── DAO Stats ───────────────────────────────────────────────────────────────
 
-export function useDaoStats() {
-    const [stats, setStats] = useState<DaoStats | null>(null);
+export function useDaoStats(dao: DaoConfig) {
+    const [stats,   setStats]   = useState<DaoStats | null>(null);
     const [loading, setLoading] = useState(true);
 
     const refresh = useCallback(async () => {
         setLoading(true);
         try {
-            const contract = getReadContract();
+            const c = await getDaoReadContract(dao.daoP2op);
             const [ts, pc, st] = await Promise.all([
-                contract.getTotalStaked(),
-                contract.getProposalCount(),
-                contract.getStakingToken(),
+                c.getTotalStaked(),
+                c.getProposalCount(),
+                c.getStakingToken(),
             ]);
             setStats({
-                totalStaked: BigInt(ts.properties?.total ?? ts.result ?? 0),
-                proposalCount: BigInt(pc.properties?.count ?? pc.result ?? 0),
-                stakingToken: String(st.properties?.token ?? st.result ?? ''),
+                totalStaked:   bigVal(ts),
+                proposalCount: bigVal(pc),
+                stakingToken:  String((st as {properties?: {token?: unknown}; result?: unknown})?.properties?.token ?? (st as {result?: unknown})?.result ?? ''),
             });
         } catch {
             setStats({ totalStaked: 0n, proposalCount: 0n, stakingToken: 'Not deployed' });
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [dao.daoP2op]);
 
     useEffect(() => { refresh(); }, [refresh]);
     return { stats, loading, refresh };
 }
 
-// ── Proposals hook ─────────────────────────────────────────────────────────
+// ── Proposals ───────────────────────────────────────────────────────────────
 
-export function useProposals(count: bigint) {
+export function useProposals(dao: DaoConfig, count: bigint) {
     const [proposals, setProposals] = useState<Proposal[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [loading,   setLoading]   = useState(false);
 
     useEffect(() => {
         if (count === 0n) { setProposals([]); return; }
-
         setLoading(true);
-        const contract = getReadContract();
         const ids = Array.from({ length: Number(count) }, (_, i) => BigInt(i + 1));
 
-        Promise.all(
-            ids.map(async (id) => {
+        getDaoReadContract(dao.daoP2op).then((c) =>
+            Promise.all(ids.map(async (id) => {
                 try {
-                    const res = await contract.getProposal(id);
-                    const bytes: Uint8Array =
-                        res.properties?.data ?? res.result ?? new Uint8Array(0);
+                    const res = await c.getProposal(id);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const bytes: Uint8Array = (res as any)?.properties?.data ?? (res as any)?.result ?? new Uint8Array(0);
                     return parseProposalBytes(bytes, id);
-                } catch {
-                    return null;
-                }
-            }),
-        )
-            .then((results) => {
-                setProposals(results.filter(Boolean) as Proposal[]);
-            })
-            .catch(() => {
-                setProposals([]);
-            })
-            .finally(() => {
-                setLoading(false);
-            });
-    }, [count]);
+                } catch { return null; }
+            }))
+        ).then((results) => {
+            setProposals(results.filter(Boolean) as Proposal[]);
+        }).catch(() => {
+            setProposals([]);
+        }).finally(() => {
+            setLoading(false);
+        });
+    }, [dao.daoP2op, count]);
 
     return { proposals, loading };
 }
 
-// ── Staked balance hook ────────────────────────────────────────────────────
+// ── Staked balance in a specific DAO ────────────────────────────────────────
 
-export function useStakedBalance(address: string) {
+export function useStakedBalance(dao: DaoConfig, walletP2op: string) {
     const [balance, setBalance] = useState(0n);
 
     useEffect(() => {
-        const addr = tryAddrFromStr(address);
-        if (!addr) return;
-        getReadContract()
-            .stakedBalance(addr)
-            .then((r: { properties?: { amount?: bigint }; result?: bigint }) => {
-                setBalance(BigInt(r.properties?.amount ?? r.result ?? 0));
-            })
-            .catch(() => {});
-    }, [address]);
+        if (!walletP2op) return;
+        let cancelled = false;
+        async function fetch() {
+            try {
+                const [c, walletAddr] = await Promise.all([
+                    getDaoReadContract(dao.daoP2op),
+                    resolveP2op(walletP2op),
+                ]);
+                const r = await c.stakedBalance(walletAddr);
+                if (!cancelled) setBalance(bigVal(r));
+            } catch { if (!cancelled) setBalance(0n); }
+        }
+        fetch();
+        return () => { cancelled = true; };
+    }, [dao.daoP2op, walletP2op]);
 
     return balance;
 }
 
-// ── Write actions ──────────────────────────────────────────────────────────
+// ── OP20 token wallet balance ────────────────────────────────────────────────
 
-export function useDaoActions(address: string) {
-    // getWriteContract is safe — it gracefully handles non-hex bech32 addresses
-    const contract = useCallback(() => getWriteContract(address), [address]);
+export function useTokenBalance(dao: DaoConfig, walletP2op: string) {
+    const [balance, setBalance] = useState(0n);
 
-    const stake = useCallback(
-        async (amount: bigint) => {
-            const sim = await contract().stake(amount);
-            return sim.sendTransaction({
-                signer: null,
-                mldsaSigner: null,
-                provider: getProvider(),
-                network: NETWORK,
-            });
-        },
-        [contract],
-    );
+    useEffect(() => {
+        if (!walletP2op) return;
+        let cancelled = false;
+        async function fetch() {
+            try {
+                const [c, walletAddr] = await Promise.all([
+                    getTokenReadContract(dao.tokenP2op),
+                    resolveP2op(walletP2op),
+                ]);
+                const r = await c.balanceOf(walletAddr);
+                if (!cancelled) setBalance(bigVal(r));
+            } catch { if (!cancelled) setBalance(0n); }
+        }
+        fetch();
+        return () => { cancelled = true; };
+    }, [dao.tokenP2op, walletP2op]);
 
-    const unstake = useCallback(
-        async (amount: bigint) => {
-            const sim = await contract().unstake(amount);
-            return sim.sendTransaction({
-                signer: null,
-                mldsaSigner: null,
-                provider: getProvider(),
-                network: NETWORK,
-            });
-        },
-        [contract],
-    );
+    return balance;
+}
 
-    const createProposal = useCallback(
-        async (
-            proposalType: number,
-            descriptionHash: bigint,
-            amount: bigint,
-            recipient: string,
-            token: string,
-        ) => {
-            const zero = Address.fromString('0x' + '00'.repeat(32));
-            const recipientAddr = tryAddrFromStr(recipient) ?? zero;
-            const tokenAddr = tryAddrFromStr(token) ?? zero;
+// ── Staked balance across all DAOs (for home page) ──────────────────────────
 
-            const sim = await contract().createProposal(
-                proposalType, descriptionHash, amount, recipientAddr, tokenAddr,
-            );
-            return sim.sendTransaction({
-                signer: null,
-                mldsaSigner: null,
-                provider: getProvider(),
-                network: NETWORK,
-            });
-        },
-        [contract],
-    );
+export function useAllStakedBalances(daos: DaoConfig[], walletP2op: string) {
+    const [balances, setBalances] = useState<Record<string, bigint>>({});
 
-    const vote = useCallback(
-        async (proposalId: bigint, support: boolean) => {
-            const sim = await contract().vote(proposalId, support);
-            return sim.sendTransaction({
-                signer: null,
-                mldsaSigner: null,
-                provider: getProvider(),
-                network: NETWORK,
-            });
-        },
-        [contract],
-    );
+    useEffect(() => {
+        if (!walletP2op) { setBalances({}); return; }
+        let cancelled = false;
+        async function fetch() {
+            try {
+                const walletAddr = await resolveP2op(walletP2op);
+                const entries = await Promise.all(
+                    daos.map(async (dao) => {
+                        try {
+                            const c = await getDaoReadContract(dao.daoP2op);
+                            const r = await c.stakedBalance(walletAddr);
+                            return [dao.id, bigVal(r)] as const;
+                        } catch { return [dao.id, 0n] as const; }
+                    })
+                );
+                if (!cancelled) setBalances(Object.fromEntries(entries));
+            } catch { if (!cancelled) setBalances({}); }
+        }
+        fetch();
+        return () => { cancelled = true; };
+    }, [daos, walletP2op]);
 
-    const executeProposal = useCallback(
-        async (proposalId: bigint) => {
-            const sim = await contract().executeProposal(proposalId);
-            return sim.sendTransaction({
-                signer: null,
-                mldsaSigner: null,
-                provider: getProvider(),
-                network: NETWORK,
-            });
-        },
-        [contract],
-    );
+    return balances;
+}
 
-    return { stake, unstake, createProposal, vote, executeProposal };
+// ── Token allowance ─────────────────────────────────────────────────────────
+
+export function useTokenAllowance(dao: DaoConfig, walletP2op: string) {
+    const [allowance, setAllowance] = useState(0n);
+
+    const refresh = useCallback(async () => {
+        if (!walletP2op) return;
+        try {
+            const [c, walletAddr, daoAddr] = await Promise.all([
+                getTokenReadContract(dao.tokenP2op),
+                resolveP2op(walletP2op),
+                resolveP2op(dao.daoP2op),
+            ]);
+            const r = await c.allowance(walletAddr, daoAddr);
+            setAllowance(bigVal(r));
+        } catch { setAllowance(0n); }
+    }, [dao.tokenP2op, dao.daoP2op, walletP2op]);
+
+    useEffect(() => { refresh(); }, [refresh]);
+    return { allowance, refreshAllowance: refresh };
+}
+
+// ── Write actions ────────────────────────────────────────────────────────────
+
+const MAX_U256 = (1n << 256n) - 1n;
+
+export function useDaoActions(dao: DaoConfig, walletP2op: string) {
+    const approve = useCallback(async () => {
+        const c       = await getTokenWriteContract(dao.tokenP2op, walletP2op);
+        const daoAddr = await resolveP2op(dao.daoP2op);
+        const sim     = await c.approve(daoAddr, MAX_U256);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao, walletP2op]);
+
+    const stake = useCallback(async (amount: bigint) => {
+        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const sim = await c.stake(amount);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao.daoP2op, walletP2op]);
+
+    const unstake = useCallback(async (amount: bigint) => {
+        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const sim = await c.unstake(amount);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao.daoP2op, walletP2op]);
+
+    const vote = useCallback(async (proposalId: bigint, support: boolean) => {
+        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const sim = await c.vote(proposalId, support);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao.daoP2op, walletP2op]);
+
+    const executeProposal = useCallback(async (proposalId: bigint) => {
+        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const sim = await c.executeProposal(proposalId);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao.daoP2op, walletP2op]);
+
+    const createProposal = useCallback(async (
+        proposalType: number,
+        descriptionHash: bigint,
+        amount: bigint,
+        recipient: string,
+        token: string,
+    ) => {
+        const zeroAddr = await resolveP2op('opt1sqqtee6htq8t5pgtwa2rgnlrts2v95wsa7g7tz0wl').catch(
+            () => { throw new Error('Cannot resolve zero address'); }
+        );
+        const recipientAddr = recipient ? await resolveP2op(recipient).catch(() => zeroAddr) : zeroAddr;
+        const tokenAddr     = token     ? await resolveP2op(token).catch(() => zeroAddr)     : zeroAddr;
+        const c   = await getDaoWriteContract(dao.daoP2op, walletP2op);
+        const sim = await c.createProposal(proposalType, descriptionHash, amount, recipientAddr, tokenAddr);
+        return sim.sendTransaction({ signer: null, mldsaSigner: null, provider: getProvider(), network: NETWORK });
+    }, [dao.daoP2op, walletP2op]);
+
+    return { approve, stake, unstake, vote, executeProposal, createProposal };
 }
