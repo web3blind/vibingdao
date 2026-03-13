@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 
-console.log('deploy v0.0.11')
+console.log('deploy v0.0.12')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -19,7 +19,7 @@ const {
 } = await import('@btc-vision/transaction');
 
 // Use the transaction package's bundled bitcoin which has opnetTestnet
-const { networks } = await import('./node_modules/@btc-vision/transaction/node_modules/@btc-vision/bitcoin/build/index.js');
+const { networks } = await import('@btc-vision/bitcoin');
 const { JSONRpcProvider } = await import('opnet');
 
 const NETWORK  = networks.opnetTestnet;
@@ -70,7 +70,7 @@ console.log('Wallet:', address);
 console.log('WASM:  ', WASM_FILE, `(${fs.statSync(WASM_FILE).size} bytes)`);
 console.log();
 
-const provider = new JSONRpcProvider(RPC_URL, NETWORK);
+const provider = new JSONRpcProvider({ url: RPC_URL, network: NETWORK });
 
 // Get UTXOs
 console.log('Fetching UTXOs…');

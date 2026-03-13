@@ -23,8 +23,8 @@ export const DAO_CONFIGS: DaoConfig[] = [
         symbol: 'VIBE',
         icon: '🎵',
         color: '#7c3aed',
-        daoP2op:   'opt1sqqtee6htq8t5pgtwa2rgnlrts2v95wsa7g7tz0wl',
-        tokenP2op: 'opt1sqqtee6htq8t5pgtwa2rgnlrts2v95wsa7g7tz0wl', // VIBE = DAO contract
+        daoP2op:   'opt1sqpry46zytfky4zrj5ae3y0zdnt2pxatdkup8ry25',
+        tokenP2op: 'opt1sqpry46zytfky4zrj5ae3y0zdnt2pxatdkup8ry25', // VIBE = DAO contract
         decimals: 8,
     },
     {
@@ -33,7 +33,7 @@ export const DAO_CONFIGS: DaoConfig[] = [
         symbol: 'MOTO',
         icon: '🏍',
         color: '#ea580c',
-        daoP2op:   'opt1sqqgnnyefd03744zeqq2v0f9zendw0pjmu5z5w652',
+        daoP2op:   'opt1sqr5ryc9yut8w6j7jzs9jf90fuady59skq50uuees',
         tokenP2op: 'opt1sqzkx6wm5acawl9m6nay2mjsm6wagv7gazcgtczds',
         decimals: 18,
     },
@@ -43,7 +43,7 @@ export const DAO_CONFIGS: DaoConfig[] = [
         symbol: 'PILL',
         icon: '💊',
         color: '#e11d48',
-        daoP2op:   'opt1sqpsff94rtfzfl864jpjlv8alguk8uwq6wuvcyfx4',
+        daoP2op:   'opt1sqrrlljj2l7c4je7qu3ltxm479z77lw3cxvyj4mha',
         tokenP2op: 'opt1sqp5gx9k0nrqph3sy3aeyzt673dz7ygtqxcfdqfle',
         decimals: 8,
     },
