@@ -17,6 +17,67 @@
 ```bash
 cd vibingdao
 npm install
+```
+
+> **CRITICAL — apply the Networks.ts patch before building.**
+> `@btc-vision/btc-runtime@1.10.x` ships with `OPNetTestnet` removed from its
+> `Networks` enum. Every contract deployed on OPNet testnet without this patch
+> will revert with `"Unknown chain id"` during `onDeployment` and its bytecode
+> will never be stored. The contract will appear deployed but will be
+> permanently inoperable (`btc_getCode` returns "Contract bytecode not found").
+
+After `npm install`, open
+`node_modules/@btc-vision/btc-runtime/runtime/script/Networks.ts` and:
+
+**1. Add the enum value:**
+```diff
+ export enum Networks {
+     Unknown = -1,
+     Mainnet = 0,
+     Testnet = 1,
+     Regtest = 2,
++    OPNetTestnet = 3,
+ }
+```
+
+**2. Add the field and constructor initialisation inside `NetworkManager`:**
+```diff
++    private readonly opnetTestnet: Uint8Array;
+
+     constructor() {
+         // … existing mainnet/testnet/regtest blocks …
++
++        const opnetTestnet = new Uint8Array(32);
++        opnetTestnet.set([
++            0x00, 0x00, 0x01, 0x7f, 0x85, 0x10, 0x6b, 0x1f, 0xee, 0xaf, 0x2f, 0x70, 0xf1, 0xe2,
++            0xb8, 0x05, 0x98, 0x5b, 0xb5, 0x75, 0xf8, 0x8f, 0x9b, 0x0b, 0xa5, 0x75, 0x3d, 0x2f,
++            0x3c, 0xf1, 0x32, 0x73,
++        ]);
++        this.opnetTestnet = opnetTestnet;
+     }
+```
+
+**3. Add the `hrp()` case:**
+```diff
++            case Networks.OPNetTestnet:
++                return 'opt';
+```
+
+**4. Add the `getChainId()` case:**
+```diff
++            case Networks.OPNetTestnet:
++                out.set(this.opnetTestnet);
++                return out;
+```
+
+**5. Add the `fromChainId()` check (before the final `throw`):**
+```diff
++        if (this.equals(chainId, this.opnetTestnet)) return Networks.OPNetTestnet;
+```
+
+Then build:
+
+```bash
 npm run build          # produces build/VibingDAO.wasm
 ```
 
@@ -36,7 +97,7 @@ WebAssembly.compile(fs.readFileSync('build/VibingDAO.wasm'))
 
 Expected output:
 ```
-Size: 40671 bytes
+Size: ~40800 bytes
 Exports OK: true
 ```
 
@@ -206,15 +267,16 @@ Decode in order:
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 1 byte | `proposalType` (u8) |
+| 0 | 1 byte | `proposalType` (u8: 0 = text, 1 = treasury) |
 | 1 | 32 bytes | `yesVotes` (u256, big-endian) |
 | 33 | 32 bytes | `noVotes` (u256, big-endian) |
 | 65 | 32 bytes | `deadline` (u256 block number) |
 | 97 | 1 byte | `executed` (bool: 0 or 1) |
 | 98 | 32 bytes | `amount` (u256) |
 | 130 | 32 bytes | `descriptionHash` (u256) |
+| 162 | 32 bytes | `recipient` (u256 / address, zero if text proposal) |
 
-Total: 162 bytes.
+Total: 194 bytes.
 
 ---
 
