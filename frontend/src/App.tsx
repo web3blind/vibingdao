@@ -601,6 +601,11 @@ function DaoApp() {
                 ? <DaoPage dao={selectedDao} onBack={goHome} />
                 : <HomePage onSelectDao={goDao} />
             }
+
+            <footer>
+                <span>© 2026 — built by a blind programmer</span>
+                <a href="https://github.com/web3blind" target="_blank" rel="noopener noreferrer">GitHub</a>
+            </footer>
         </div>
     );
 }

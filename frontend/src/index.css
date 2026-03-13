@@ -190,3 +190,21 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 }
 
 .muted-note { font-size: 12px; color: var(--muted); }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+footer {
+    margin-top: 48px;
+    padding: 20px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--muted);
+}
+footer a {
+    color: var(--muted);
+    text-decoration: none;
+}
+footer a:hover { color: var(--accent); }
