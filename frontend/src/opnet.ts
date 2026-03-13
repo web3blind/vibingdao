@@ -91,6 +91,41 @@ export function prefetchAddresses(p2ops: string[]): void {
     }
 }
 
+// ── getProposal raw bytes (bypasses ABI BYTES length-prefix decoder) ─────────
+//
+// The ABI defines getProposal as returning BYTES, but the contract writes raw
+// bytes with no length prefix.  The SDK's BYTES decoder reads the first 4 bytes
+// as the length → returns 0 bytes (text proposals) or throws (treasury).
+//
+// Fix: use an ABI with outputs:[] so decodeOutput skips entirely and
+// response.result (a BinaryReader) keeps the untouched raw bytes.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const GET_PROPOSAL_RAW_ABI: any[] = [{
+    name:    'getProposal',
+    type:    'function',
+    inputs:  [{ name: 'proposalId', type: 'UINT256' }],
+    outputs: [],
+}];
+
+const _proposalRawContracts = new Map<string, unknown>();
+
+export async function getProposalRaw(daoP2op: string, proposalId: bigint): Promise<Uint8Array> {
+    if (!_proposalRawContracts.has(daoP2op)) {
+        const addr = await resolveP2op(daoP2op);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        _proposalRawContracts.set(daoP2op, getContract(addr, GET_PROPOSAL_RAW_ABI as any, getProvider(), NETWORK));
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = _proposalRawContracts.get(daoP2op) as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res: any = await c.getProposal(proposalId);
+    // result is a BinaryReader; .buffer is a DataView over the contract's raw return bytes
+    const dv: DataView | undefined = res?.result?.buffer;
+    if (!dv || !(dv instanceof DataView)) return new Uint8Array(0);
+    return new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+}
+
 // ── DAO contract factories (VibingDAO ABI) ──────────────────────────────────
 
 const _daoRead  = new Map<string, unknown>();

@@ -11,6 +11,8 @@ import {
     getDaoWriteContract,
     getTokenReadContract,
     getTokenWriteContract,
+    getProposalRaw,
+    getProvider,
     resolveP2op,
     NETWORK,
     RPC_URL,
@@ -28,6 +30,7 @@ export interface Proposal {
     executed: boolean;
     amount: bigint;
     descriptionHash: string;
+    recipient: string;  // 32-byte address hash as hex ('' if not present)
 }
 
 export interface DaoStats {
@@ -40,7 +43,7 @@ export interface DaoStats {
 
 function parseProposalBytes(bytes: Uint8Array, id: bigint): Proposal {
     if (!bytes || bytes.length < 162) {
-        return { id, proposalType: 0, yesVotes: 0n, noVotes: 0n, deadline: 0n, executed: false, amount: 0n, descriptionHash: '' };
+        return { id, proposalType: 0, yesVotes: 0n, noVotes: 0n, deadline: 0n, executed: false, amount: 0n, descriptionHash: '', recipient: '' };
     }
     let offset = 0;
     const proposalType = bytes[offset++];
@@ -56,7 +59,12 @@ function parseProposalBytes(bytes: Uint8Array, id: bigint): Proposal {
     const amount   = readU256();
     const descHash = Array.from(bytes.slice(offset, offset + 32))
         .map((b) => b.toString(16).padStart(2, '0')).join('');
-    return { id, proposalType, yesVotes, noVotes, deadline, executed, amount, descriptionHash: descHash };
+    offset += 32;
+    const recipient = bytes.length >= 194
+        ? Array.from(bytes.slice(offset, offset + 32))
+            .map((b) => b.toString(16).padStart(2, '0')).join('')
+        : '';
+    return { id, proposalType, yesVotes, noVotes, deadline, executed, amount, descriptionHash: descHash, recipient };
 }
 
 function bigVal(r: unknown): bigint {
@@ -103,36 +111,49 @@ export function useDaoStats(dao: DaoConfig) {
     return { stats, loading, refresh };
 }
 
+// ── Current block number ─────────────────────────────────────────────────────
+
+export function useCurrentBlock(): bigint {
+    const [block, setBlock] = useState(0n);
+    useEffect(() => {
+        getProvider().getBlockNumber().then(setBlock).catch(() => {});
+    }, []);
+    return block;
+}
+
 // ── Proposals ───────────────────────────────────────────────────────────────
 
 export function useProposals(dao: DaoConfig, count: bigint) {
     const [proposals, setProposals] = useState<Proposal[]>([]);
     const [loading,   setLoading]   = useState(false);
+    const [refreshKey, setRefreshKey] = useState(0);
+
+    const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
     useEffect(() => {
         if (count === 0n) { setProposals([]); return; }
         setLoading(true);
         const ids = Array.from({ length: Number(count) }, (_, i) => BigInt(i + 1));
 
-        getDaoReadContract(dao.daoP2op).then((c) =>
-            Promise.all(ids.map(async (id) => {
+        Promise.all(ids.map(async (id) => {
                 try {
-                    const res = await c.getProposal(id);
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const bytes: Uint8Array = (res as any)?.properties?.data ?? (res as any)?.result ?? new Uint8Array(0);
+                    const bytes = await getProposalRaw(dao.daoP2op, id);
                     return parseProposalBytes(bytes, id);
-                } catch { return null; }
+                } catch (e) {
+                    console.log(`[VibingDAO] getProposal(${id}) threw:`, e);
+                    return null;
+                }
             }))
-        ).then((results) => {
+        .then((results) => {
             setProposals(results.filter(Boolean) as Proposal[]);
         }).catch(() => {
             setProposals([]);
         }).finally(() => {
             setLoading(false);
         });
-    }, [dao.daoP2op, count]);
+    }, [dao.daoP2op, count, refreshKey]);
 
-    return { proposals, loading };
+    return { proposals, loading, refresh };
 }
 
 // ── Staked balance in a specific DAO ────────────────────────────────────────
@@ -267,35 +288,18 @@ async function fetchUTXOs(btcAddress: string, signer: UnisatSigner | null): Prom
 
     console.log('[VibingDAO] fetchUTXOs querying:', addresses);
 
-    const allUtxos: unknown[] = [];
-    for (const addr of addresses) {
-        try {
-            const url = `${RPC_URL}/api/v1/address/utxos?address=${encodeURIComponent(addr)}&optimize=false`;
-            console.log('[VibingDAO] GET', url);
-            const res  = await fetch(url);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const json = await res.json() as any;
-            console.log('[VibingDAO] response for', addr, {
-                confirmed: json.confirmed?.length ?? 0,
-                pending:   json.pending?.length   ?? 0,
-                raw:       json.raw?.length        ?? 0,
-            });
-            const hasUtxos = (json.confirmed?.length ?? 0) + (json.pending?.length ?? 0) > 0;
-            if (hasUtxos) {
-                const parsed = await _limitedProvider.fetchUTXOMultiAddr({
-                    addresses:       [addr],
-                    minAmount:       330n,
-                    requestedAmount: 10_000_000n,
-                });
-                allUtxos.push(...parsed);
-            }
-        } catch (err) {
-            console.log('[VibingDAO] error for', addr, err);
-        }
+    try {
+        const utxos = await _limitedProvider.fetchUTXOMultiAddr({
+            addresses,
+            minAmount:       330n,
+            requestedAmount: 10_000_000n,
+        });
+        console.log('[VibingDAO] total UTXOs:', utxos.length);
+        return utxos;
+    } catch (err) {
+        console.log('[VibingDAO] fetchUTXOMultiAddr error:', err);
+        return [];
     }
-
-    console.log('[VibingDAO] total UTXOs:', allUtxos.length);
-    return allUtxos;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -137,6 +137,15 @@ textarea { resize: vertical; min-height: 70px; }
 hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 .hash-display { font-family: monospace; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proposal-deadline { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.proposal-deadline.deadline-over { color: var(--accent); }
+
+/* ── Treasury address ───────────────────────────────────────────────────── */
+.treasury-addr { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 12px; }
+.treasury-addr-label { color: var(--muted); }
+.treasury-addr-value { font-family: monospace; color: var(--text); }
+.btn-copy { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 3px 8px; font-size: 11px; border-radius: 5px; cursor: pointer; transition: border-color .15s, color .15s; }
+.btn-copy:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ── DAO grid ───────────────────────────────────────────────────────────── */
 .dao-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 28px; }

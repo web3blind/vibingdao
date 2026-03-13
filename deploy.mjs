@@ -24,8 +24,8 @@ const { JSONRpcProvider } = await import('opnet');
 
 const NETWORK  = networks.opnetTestnet;
 const RPC_URL  = 'https://testnet.opnet.org';
-const FEE_RATE = 5;        // sat/vB
-const GAS_FEE  = 10_000n;  // satoshis
+const FEE_RATE = 10;         // sat/vB
+const GAS_FEE  = 300_000n;  // satoshis
 
 // ── Wallet ─────────────────────────────────────────────────────────────────
 

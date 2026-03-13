@@ -15,6 +15,7 @@ import {
     useAllStakedBalances,
     useDaoActions,
     useTokenDecimals,
+    useCurrentBlock,
 } from './useDao';
 import type { Proposal } from './useDao';
 import type { Address } from '@btc-vision/transaction';
@@ -45,6 +46,16 @@ function fmt(n: bigint, decimals = 8): string {
 function shortAddr(addr: string): string {
     if (!addr || addr.length < 12) return addr;
     return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
+}
+
+function fmtDeadline(deadline: bigint, currentBlock: bigint): string {
+    if (deadline === 0n || currentBlock === 0n) return '';
+    const blocksLeft = deadline - currentBlock;
+    const minutes = Number(blocksLeft < 0n ? -blocksLeft : blocksLeft) * 10;
+    const hours = Math.round(minutes / 60);
+    const days  = Math.round(minutes / 1440);
+    const label = days >= 2 ? `~${days}d` : hours >= 1 ? `~${hours}h` : `~${minutes}m`;
+    return blocksLeft > 0n ? `${label} left` : `ended ${label} ago`;
 }
 
 function votePercent(p: Proposal): number {
@@ -158,10 +169,12 @@ function DaoCard({
 
 function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
     const { connected, address, btcAddress } = useWallet();
-    const { stats, loading: statsLoading, refresh } = useDaoStats(dao);
-    const { proposals, loading: propsLoading } = useProposals(dao, stats?.proposalCount ?? 0n);
+    const { stats, loading: statsLoading, refresh: refreshStats } = useDaoStats(dao);
+    const { proposals, loading: propsLoading, refresh: refreshProposals } = useProposals(dao, stats?.proposalCount ?? 0n);
     const decimals = useTokenDecimals(dao);
+    const currentBlock = useCurrentBlock();
     const [tab, setTab] = useState<'proposals' | 'stake' | 'create'>('proposals');
+    const refresh = () => { refreshStats(); refreshProposals(); };
 
     return (
         <div>
@@ -239,7 +252,9 @@ function DaoPage({ dao, onBack }: { dao: DaoConfig; onBack: () => void }) {
                                             connected={connected}
                                             walletAddr={address}
                                             btcAddress={btcAddress}
+                                            currentBlock={currentBlock}
                                             onRefresh={refresh}
+                                            onRefreshProposals={refreshProposals}
                                         />
                                     ))}
                                 </div>
@@ -280,7 +295,7 @@ function StakedStatCell({ dao, walletAddr, decimals }: { dao: DaoConfig; walletA
 // ── Proposal card ────────────────────────────────────────────────────────────
 
 function ProposalCard({
-    proposal, dao, decimals, connected, walletAddr, btcAddress, onRefresh,
+    proposal, dao, decimals, connected, walletAddr, btcAddress, currentBlock, onRefresh, onRefreshProposals,
 }: {
     proposal: Proposal;
     dao: DaoConfig;
@@ -288,28 +303,36 @@ function ProposalCard({
     connected: boolean;
     walletAddr: Address | null;
     btcAddress: string;
+    currentBlock: bigint;
     onRefresh: () => void;
+    onRefreshProposals: () => void;
 }) {
     const { show } = useToast();
     const { signer } = useWallet();
     const { vote, executeProposal } = useDaoActions(dao, walletAddr, btcAddress, signer);
-    const pct    = votePercent(proposal);
-    const active = !proposal.executed;
+    const pct      = votePercent(proposal);
+    const active   = !proposal.executed;
+    const deadline = fmtDeadline(proposal.deadline, currentBlock);
+    const votingOver = currentBlock > 0n && proposal.deadline > 0n && currentBlock >= proposal.deadline;
 
     const handleVote = async (support: boolean) => {
         try {
             await vote(proposal.id, support);
-            show(`Vote ${support ? 'YES' : 'NO'} submitted`, 'success');
+            show(`Vote ${support ? 'YES' : 'NO'} submitted — stats update after confirmation`, 'success');
             onRefresh();
+            onRefreshProposals();
         } catch (e) { show(`Vote failed: ${txError(e)}`, 'error'); }
     };
     const handleExecute = async () => {
         try {
             await executeProposal(proposal.id);
-            show('Execution submitted', 'success');
+            show('Execution submitted — status updates after confirmation', 'success');
             onRefresh();
+            onRefreshProposals();
         } catch (e) { show(`Execute failed: ${txError(e)}`, 'error'); }
     };
+
+    const hashDisplay = proposal.descriptionHash.replace(/^0+$/, '') || null;
 
     return (
         <div className="proposal">
@@ -325,12 +348,28 @@ function ProposalCard({
                     }
                 </div>
             </div>
-            <div className="hash-display">Hash: 0x{proposal.descriptionHash}</div>
-            {proposal.proposalType === 1 && proposal.amount > 0n && (
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                    Transfer: {fmt(proposal.amount, decimals)} {dao.symbol}
-                </div>
+            {deadline && (
+                <div className={`proposal-deadline${votingOver ? ' deadline-over' : ''}`}>{deadline}</div>
             )}
+            {hashDisplay && <div className="hash-display">Hash: 0x{hashDisplay.slice(0, 16)}…</div>}
+            {proposal.proposalType === 1 && proposal.amount > 0n && (() => {
+                const recipientHex = proposal.recipient && !/^0+$/.test(proposal.recipient) ? proposal.recipient : null;
+                return (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                        Transfer: {fmt(proposal.amount, decimals)} {dao.symbol}
+                        {recipientHex && (
+                            <>
+                                {', to '}
+                                <span style={{ fontFamily: 'monospace' }}>0x{recipientHex.slice(0, 6)}…{recipientHex.slice(-4)}</span>
+                                <button
+                                    className="btn-copy"
+                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText('0x' + recipientHex); }}
+                                >COPY</button>
+                            </>
+                        )}
+                    </div>
+                );
+            })()}
             <div className="vote-bar">
                 <div className="vote-bar-fill" style={{ width: `${pct}%` }} />
             </div>

@@ -462,8 +462,9 @@ export class VibingDAO extends OP20 {
         const proposalId: u256 = calldata.readU256();
         this.requireProposalExists(proposalId);
 
-        // 1 (u8) + 5×32 (u256) + 1 (bool) + 32 (u256) = 194 bytes
-        const response = new BytesWriter(1 + 5 * U256_BYTE_LENGTH + 1 + U256_BYTE_LENGTH);
+        // 1 (u8) + 5×32 (u256) + 1 (bool) + 3×32 (u256) = 226 bytes
+        // Fields: type | yesVotes | noVotes | deadline | executed | amount | descHash | recipient
+        const response = new BytesWriter(1 + 5 * U256_BYTE_LENGTH + 1 + 3 * U256_BYTE_LENGTH);
         response.writeU8(this.proposalTypeMap.get(proposalId).toU32() as u8);
         response.writeU256(this.proposalYesVotes.get(proposalId));
         response.writeU256(this.proposalNoVotes.get(proposalId));
@@ -471,6 +472,7 @@ export class VibingDAO extends OP20 {
         response.writeBoolean(this.proposalExecutedMap.get(proposalId) != u256.Zero);
         response.writeU256(this.proposalAmountMap.get(proposalId));
         response.writeU256(this.proposalDescHashMap.get(proposalId));
+        response.writeU256(this.proposalRecipientMap.get(proposalId));
         return response;
     }
 
